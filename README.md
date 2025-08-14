@@ -3,7 +3,7 @@
 Fast, offline **infinite canvas** for sketching, whiteboarding, and motion-style doodles.  
 Privacy-first desktop app — no accounts, no cloud, everything saved locally.
 
-https://github.com/<you>/<repo> (replace me)
+[https://github.com/<you>/<repo> (replace me)](https://github.com/ZENTCH-Q/Deep-Canvas.git)
 
 ![demo](docs/demo.gif) <!-- add a short screen recording later -->
 
@@ -27,14 +27,8 @@ https://github.com/<you>/<repo> (replace me)
 ## 🚀 Install
 
 ### Windows (recommended)
-Grab the latest `Deep Canvas Setup x.y.z.exe` from **Releases** and install.  
+Grab the latest `Deep Canvas x.y.z.exe` from **Releases** and install.  
 If SmartScreen warns, click **More info → Run anyway** (unsigned builds).
-
-### macOS
-Download the `.dmg` from **Releases** (unsigned dev builds).  
-First run: right-click the app → **Open** → **Open**.
-
----
 
 ## 🧭 Quick start & hotkeys
 
