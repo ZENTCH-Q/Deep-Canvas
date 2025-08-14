@@ -531,8 +531,9 @@ export function render(state, camera, ctx, canvasLike, opts = {}) {
     const a = s1 / Math.max(1e-20, s0);
     const bx = tx1 - a * tx0;
     const by = ty1 - a * ty0;
-    const sbx = Math.round(dpr * bx) / dpr;
-    const sby = Math.round(dpr * by) / dpr;
+    const isZooming = Math.abs(a - 1) > 1e-3;
+    const sbx = isZooming ? bx : (Math.round(dpr * bx) / dpr);
+    const sby = isZooming ? by : (Math.round(dpr * by) / dpr);
 
     ctx.setTransform(dpr * a, 0, 0, dpr * a, dpr * sbx, dpr * sby);
     ctx.drawImage(state._navBmp, 0, 0);
@@ -546,8 +547,9 @@ export function render(state, camera, ctx, canvasLike, opts = {}) {
     const by = ty1 - a * ty0;
     const src = state._navBuf || state._navBmp;
 
-    const sbx = Math.round(dpr * bx) / dpr;
-    const sby = Math.round(dpr * by) / dpr;
+    const isZooming = Math.abs(a - 1) > 1e-3;
+    const sbx = isZooming ? bx : (Math.round(dpr * bx) / dpr);
+    const sby = isZooming ? by : (Math.round(dpr * by) / dpr);
 
     const prevSmooth = ctx.imageSmoothingEnabled;
     const prevQual = ctx.imageSmoothingQuality;

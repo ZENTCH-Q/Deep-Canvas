@@ -381,7 +381,7 @@ let wheelAccum = 0, wheelPoint = { x:0, y:0 }, wheelRAF = 0;
 let wheelIdleTimer = 0;
 let lastNavRefresh = 0;
 
-const NAV_REFRESH_MS = 100;
+const NAV_REFRESH_MS = 1_00;
 const WHEEL_IDLE_MS  = 110;
 
 function ensureNavSnapshot() {
@@ -454,28 +454,23 @@ function applyWheelZoom(){
 
   const r = canvas.getBoundingClientRect();
   const p = { x: wheelPoint.x - r.left, y: r.top ? (wheelPoint.y - r.top) : wheelPoint.y };
-
-  const factor = Math.pow(1.1, -wheelAccum / 120);
+  const zoomFactor = Math.pow(1.1, -wheelAccum / 120);
   wheelAccum = 0;
 
-  camera.zoomAround(p, factor);
+  camera.zoomAround(p, zoomFactor);
 
-  const now = performance.now();
-  if (now - lastNavRefresh >= NAV_REFRESH_MS) {
-    refreshNavBufferNow();
-    lastNavRefresh = now;
-  }
   scheduleRender();
 
   clearTimeout(wheelIdleTimer);
   wheelIdleTimer = setTimeout(() => {
     const started = renormalizeIfNeeded(camera, state.strokes, { budgetMs: 4 }, state);
     if (started) beginFreeze();
-    whenRenormalized().then(() => { if (started) rebuildIndexAsync(); });
-    applyAdaptiveGridCell();
-
-    endNavSnapshot();
-    scheduleRender();
+    whenRenormalized().then(() => {
+      if (started) rebuildIndexAsync();
+      applyAdaptiveGridCell();
+      endNavSnapshot();    
+      scheduleRender();
+    });
   }, WHEEL_IDLE_MS);
 }
 
