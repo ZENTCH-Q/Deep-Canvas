@@ -213,6 +213,7 @@ export function transformStrokeGeom(s, xf){
   const theta = Number.isFinite(xf?.theta) ? xf.theta : 0;
 
   const c = Math.cos(theta), sN = Math.sin(theta);
+  const kw = Math.sqrt(Math.abs(sx) * Math.abs(sy)) || 1;
 
   const apply = (x, y) => {
     const rx = (x - ox) * sx;
@@ -249,6 +250,7 @@ export function transformStrokeGeom(s, xf){
     if (!Number.isFinite(minx)) { minx = 0; miny = 0; maxx = 0; maxy = 0; }
     s.bbox = { minx, miny, maxx, maxy };
     s._chunks = null;
+    if (typeof s.w === 'number') s.w = s.w * kw;
 
   } else if (s.kind === 'shape'){
     const a = apply(s.start.x, s.start.y);
@@ -260,6 +262,7 @@ export function transformStrokeGeom(s, xf){
       maxx: Math.max(a.x, b.x),
       maxy: Math.max(a.y, b.y),
     };
+    if (typeof s.w === 'number') s.w = s.w * kw;
   }
   delete s._lodCache;
   try {
