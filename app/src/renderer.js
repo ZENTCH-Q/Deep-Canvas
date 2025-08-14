@@ -94,7 +94,8 @@ function animXfFromLayers(s, _state, t){
   if (!layers || !layers.length) return null;
 
   let sx=1, sy=1, theta=0, tx=0, ty=0;
-  const id = s.id ?? 'stroke';
+  const groupId = layers?.[0]?.groupId;
+  const id = groupId ?? (s.id ?? 'stroke');
   const pA = seedFromId(id, 'A'), pB = seedFromId(id, 'B'), pC = seedFromId(id, 'C');
 
   for (const L of layers){
@@ -628,8 +629,22 @@ export function render(state, camera, ctx, canvasLike, opts = {}) {
     const axf = animXfFromLayers(s, state, tNow);
     let animApplied = false;
     if (axf) {
-      const cx = (bb.minx + bb.maxx) * 0.5;
-      const cy = (bb.miny + bb.maxy) * 0.5;
+      let cx, cy;
+      let lp = null;
+      try {
+        lp = s?.react2?.anim?.layers?.find(l => l?.enabled && l?.pivot)?.pivot || null;
+      } catch {}
+      if (lp) {
+        if (unbaked) {
+          cx = lp.x * bake.s + bake.tx;
+          cy = lp.y * bake.s + bake.ty;
+        } else {
+          cx = lp.x; cy = lp.y;
+        }
+      } else {
+        cx = (bb.minx + bb.maxx) * 0.5;
+        cy = (bb.miny + bb.maxy) * 0.5;
+      }
       ctx.save();
       ctx.translate(cx, cy);
       if (axf.theta) ctx.rotate(axf.theta);

@@ -519,12 +519,18 @@ export function initUI({ state, canvas, camera, setTool }){
     return (layers && layers.length) ? layers[0] : null;
   }
 
-  function setAnimForSelection(type, params={}){
+  function setAnimForSelection(type, params = {}) {
     const sel = Array.from(state.selection || []); if (!sel.length) return;
-    for (const s of sel){
+    const bb = selectionBBoxWorld();
+    const pivot = bb ? { x: (bb.minx + bb.maxx) * 0.5, y: (bb.miny + bb.maxy) * 0.5 } : null;
+    const groupId = 'g-' + (crypto?.randomUUID?.() || Math.random().toString(36).slice(2, 10));
+
+    for (const s of sel) {
       s.react2 = s.react2 || {};
-      if (type === 'none'){ s.react2.anim = { layers: [] }; continue; }
-      const L = { type, enabled:true, ...params };
+      if (type === 'none') { s.react2.anim = { layers: [] }; continue; }
+      const L = { type, enabled: true, ...params };
+      if (pivot) L.pivot = { ...pivot };   
+      L.groupId = groupId;              
       s.react2.anim = s.react2.anim || { layers: [] };
       s.react2.anim.layers = [L];
     }

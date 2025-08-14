@@ -262,6 +262,17 @@ export function transformStrokeGeom(s, xf){
     };
   }
   delete s._lodCache;
+  try {
+    const layers = s?.react2?.anim?.layers;
+    if (Array.isArray(layers)) {
+      for (const L of layers) {
+        if (L && L.pivot && Number.isFinite(L.pivot.x) && Number.isFinite(L.pivot.y)) {
+          const a = apply(L.pivot.x, L.pivot.y);
+          L.pivot.x = a.x; L.pivot.y = a.y;
+        }
+      }
+    }
+  } catch {}
 }
 
 /* ---------- Back-compat aliases (keep old imports working) ---------- */
