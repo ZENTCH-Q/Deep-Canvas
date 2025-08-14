@@ -1,0 +1,542 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Deep Canvas</title>
+<style>
+  :root {
+    color-scheme: dark light;
+
+    /* Canvas UI theme tokens used by renderer.js */
+    --sel-stroke:        #8a93a3;
+    --sel-fill:          rgba(138,147,163,0.10);
+
+    --handle-stroke:     #b8c1ce;
+    --handle-fill:       rgba(16,18,22,0.85);
+    --handle-fill-active:#3a7afe;
+
+    --rotate-arrow:      #eef1f5;
+
+    --label-bg:          rgba(16,18,22,0.85);
+    --label-stroke:      rgba(184,193,206,0.85);
+    --label-text:        #eef1f5;
+
+    --marquee-stroke:    #9fb3c8;
+    --marquee-fill:      rgba(159,179,200,0.18);
+  }
+
+  html, body { height:100%; margin:0; }
+  body {
+    --bg:#0f1115; --glass:#161a20cc; --panel:#161a20; --panel-2:#1b2028;
+    --border:#2a313c; --text:#e7ebf3; --muted:#9aa5b1; --accent:#6cc3ff;
+    font:13px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; background:var(--bg); color:var(--text);
+  }
+  @media (prefers-color-scheme: light) {
+    body {
+      --bg:#f7f8fb; --glass:#ffffffcc; --panel:#fff; --panel-2:#f4f6f8; --border:#dfe3e8;
+      --text:#121619; --muted:#5b6b79; --accent:#007aff;
+
+      --sel-stroke:        #7b8796;
+      --sel-fill:          rgba(123,135,150,0.10);
+      --handle-stroke:     #9aa9ba;
+      --handle-fill:       rgba(255,255,255,0.92);
+      --handle-fill-active:#3a7afe;
+      --rotate-arrow:      #1b2430;
+      --label-bg:          rgba(255,255,255,0.92);
+      --label-stroke:      rgba(154,169,186,0.85);
+      --label-text:        #1b2430;
+      --marquee-stroke:    #8aa1b8;
+      --marquee-fill:      rgba(138,161,184,0.16);
+    }
+  }
+
+  /* ===== Canvas area ===== */
+  #canvasContainer { position:relative; width:100vw; height:100vh; }
+  #c, #navOverlay { display:block; width:100vw; height:100vh; }
+  #c { cursor: crosshair; }
+  #c.panning, #c.dragging { cursor: grab; }
+  #navOverlay { position:absolute; left:0; top:0; pointer-events:none; display:none; will-change:transform; }
+
+  .chrome { position:fixed; inset:0; pointer-events:none; }
+  .dock, #toolProps, #ctxMenu, #poseHud { pointer-events:auto; }
+
+  .dock {
+    position:fixed; left:50%; bottom:24px; transform:translateX(-50%);
+    display:flex; gap:8px; background:var(--panel); border:1px solid var(--border);
+    border-radius:12px; padding:10px; box-shadow:0 6px 24px rgba(0,0,0,.2); z-index:5;
+  }
+  .tool {
+    width:38px; height:38px; display:grid; place-items:center; border-radius:9px;
+    border:1px solid transparent; background:transparent; color:var(--text); cursor:pointer;
+  }
+  .tool:hover { background:var(--panel-2); }
+  .tool.active { outline:2px solid var(--accent); }
+  .dock .sep { width:1px; height:24px; background:var(--border); margin:0 2px; }
+
+  #toolProps {
+    position:fixed; left:0; top:0; transform:translate(-50%, -108%);
+    display:none;
+    background:var(--glass); border:1px solid var(--border); border-radius:12px;
+    padding:10px; box-shadow:0 12px 40px rgba(0,0,0,.35); backdrop-filter: blur(10px);
+    z-index:6; min-width: 260px; opacity:0; transition:opacity .12s ease, transform .12s ease;
+  }
+  #toolProps.open { display:block; opacity:1; transform:translate(-50%, -100%); }
+  #toolProps::after {
+    content:''; position:absolute; left:50%; bottom:-8px; transform:translateX(-50%);
+    border-left:8px solid transparent; border-right:8px solid transparent;
+    border-top:8px solid var(--glass); filter:drop-shadow(0 -1px 0 var(--border));
+  }
+  .prop-col { display:flex; flex-direction:column; gap:10px; }
+  .prop-row { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+  .prop-row .label { color:var(--muted); white-space:nowrap; }
+  .stack { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+
+  select, input[type="color"], input[type="range"], input[type="text"], .btn {
+    background:var(--panel-2); color:var(--text); border:1px solid var(--border);
+    border-radius:8px; font:inherit;
+  }
+  select, .btn { padding:6px 10px; }
+  input[type="color"] { width:40px; height:32px; padding:0; border-radius:6px; }
+  input[type="range"] { width:140px; padding:0; }
+  .badge {
+    font:11px/1.2 system-ui; color:var(--muted); padding:4px 6px;
+    border:1px solid var(--border); border-radius:6px; background:var(--panel);
+    min-width:44px; text-align:center;
+  }
+
+  /* ---- Swatches ---- */
+  .swatch-host { display:flex; flex-direction:column; gap:6px; width:100%; }
+  .sw-row { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  .sw-title { font-size:11px; color:var(--muted); margin-right:4px; user-select:none; min-width:52px; }
+  .sw-grid { display:grid; grid-auto-flow:column; grid-auto-columns:22px; gap:6px; align-items:center; }
+  .sw {
+    width:22px; height:22px; border-radius:6px; border:1px solid var(--border);
+    cursor:pointer; position:relative;
+  }
+  .sw:focus { outline:2px solid var(--accent); outline-offset:2px; }
+  .sw.current::after {
+    content:''; position:absolute; inset:6px; border-radius:4px; border:2px solid rgba(0,0,0,.35);
+  }
+  .btn.eyedrop { padding:4px 8px; }
+
+  #ctxMenu {
+    display:none; position:absolute; background:var(--panel); border:1px solid var(--border);
+    border-radius:10px; padding:6px 0; z-index:1000; min-width: 200px; box-shadow: 0 10px 28px rgba(0,0,0,.35);
+  }
+  #ctxMenu .item { padding:10px 14px; cursor:pointer; display:flex; align-items:center; gap:10px; white-space:nowrap; }
+  #ctxMenu .item:hover { background:var(--panel-2); }
+  #ctxMenu .sep { height:1px; margin:6px 0; background:var(--border); }
+
+  /* ---- HUD (Anim + Style only; audio controls removed) ---- */
+  #poseHud {
+    position: fixed;
+    display: none;
+    z-index: 7;
+    left: -9999px; top: -9999px;
+    transform: translate(-50%, 8px);
+    background: var(--glass);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 8px 10px;
+    box-shadow: 0 10px 28px rgba(0,0,0,.35);
+    backdrop-filter: blur(10px);
+  }
+  .hud-row { display:flex; align-items:center; gap:8px; }
+  #poseHud .pose-row { display:flex; gap:8px; align-items:center; }
+  #poseHud .mini { font-size:11px; color:var(--muted); }
+  #poseHud .hud-input { background: var(--panel-2); color: var(--text); border:1px solid var(--border); border-radius:6px; padding:3px 6px; }
+  #poseHud .pose-row label { display:inline-flex; align-items:center; gap:6px; }
+  #poseHud .pose-row .stack { display:inline-flex; gap:6px; }
+
+  /* ===== Redesigned Gallery ===== */
+
+  #galleryView {
+    position: absolute; inset: 0;
+    overflow: auto;
+    background:
+      radial-gradient(1200px 800px at 20% -10%, rgba(108,195,255,.12), transparent 60%),
+      radial-gradient(900px 600px at 120% 10%, rgba(92,124,250,.14), transparent 55%),
+      var(--bg);
+    display:none;
+  }
+
+  .g-shell {
+    max-width: 1200px;
+    margin: 40px auto 80px;
+    padding: 0 20px;
+  }
+
+  .g-header {
+    display: grid;
+    gap: 8px;
+    margin-bottom: 16px;
+  }
+  .g-title {
+    display: inline-flex; align-items: center; gap: 10px;
+    color: var(--text);
+  }
+  .g-title h1 { font: 700 20px/1.25 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 0; }
+  .g-title svg { opacity: .9; }
+
+  .g-sub { color: var(--muted); font-size: 12px; }
+  .g-sub kbd {
+    font: 11px/1.1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    padding: 2px 6px; border: 1px solid var(--border); border-radius: 6px;
+    background: var(--panel); color: var(--text);
+  }
+
+  .g-root { isolation: isolate; }
+  .g-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(var(--g-col-min, 260px), 1fr));
+    gap: 16px;
+    align-content: start;
+  }
+  @media (min-width: 1400px) { .g-grid { gap: 18px; } }
+  @media (max-width: 520px)  { .g-grid { grid-template-columns: 1fr 1fr; gap: 12px; --g-col-min: 160px; } }
+
+  .g-item { min-width: 0; }
+
+  .g-card {
+    position: relative;
+    display: grid;
+    grid-template-rows: auto min-content;
+    border-radius: 14px;
+    background: color-mix(in hsl, var(--panel) 84%, black 0%);
+    border: 1px solid color-mix(in hsl, var(--border) 80%, transparent);
+    overflow: clip;
+    box-shadow: 0 10px 22px rgba(0,0,0,.18);
+    transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease;
+    will-change: transform;
+  }
+  .g-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 18px 36px rgba(0,0,0,.28);
+    border-color: color-mix(in hsl, var(--border) 50%, var(--accent) 35%);
+  }
+
+  .g-thumb {
+    position: relative;
+    aspect-ratio: 16/9;
+    background:
+      linear-gradient(180deg, rgba(255,255,255,.02), rgba(0,0,0,.06)),
+      var(--panel-2);
+  }
+  .g-thumb img { width:100%; height:100%; display:block; object-fit:cover; transform:translateZ(0); }
+  .g-thumb::after {
+    content: ""; position: absolute; inset: 0;
+    background: linear-gradient(to top, rgba(0,0,0,.24), rgba(0,0,0,0) 60%);
+    pointer-events: none;
+  }
+
+  .g-thumb.no-thumb {
+    background:
+      repeating-linear-gradient(45deg, #222 0 10px, #2b2b2b 10px 20px),
+      var(--panel-2);
+  }
+  .g-thumb.no-thumb::before {
+    content: "No preview";
+    position: absolute; inset: 0; display: grid; place-items: center;
+    color: #9aa5b1; font-size: 12px; letter-spacing: .02em;
+  }
+
+  .g-actions {
+    position: absolute; top: 8px; right: 8px; display: inline-flex; gap: 6px;
+    opacity: 0; transform: translateY(-4px);
+    transition: opacity .18s ease, transform .18s ease;
+    z-index: 2;
+  }
+  .g-card:hover .g-actions { opacity: 1; transform: translateY(0); }
+
+  .g-act {
+    display: inline-grid; place-items: center;
+    width: 28px; height: 28px;
+    border-radius: 8px;
+    border: 1px solid color-mix(in hsl, var(--border) 82%, transparent);
+    background: color-mix(in hsl, var(--panel) 92%, black 0%);
+    color: var(--text);
+    cursor: pointer;
+    transition: transform .12s ease, background .12s ease, filter .12s ease, border-color .12s ease;
+  }
+  .g-act:hover { transform: translateY(-1px); background: var(--panel-2); }
+  .g-act:active { transform: translateY(0); }
+  .g-act.g-del { color: #ff6b6b; border-color: color-mix(in hsl, #ff6b6b 40%, var(--border)); }
+  .g-act.g-del:hover { background: color-mix(in hsl, #ff6b6b 12%, var(--panel)); }
+
+  .g-meta {
+    display: flex; align-items: center; min-height: 46px;
+    padding: 10px 12px;
+    background: linear-gradient(180deg, color-mix(in hsl, var(--panel) 92%, transparent) 0%, color-mix(in hsl, var(--panel) 96%, black 0%) 100%);
+    border-top: 1px solid color-mix(in hsl, var(--border) 82%, transparent);
+  }
+  .g-name {
+    font: 600 13px/1.3 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    color: var(--text);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .g-name[contenteditable="true"] {
+    outline: 2px solid color-mix(in hsl, var(--accent) 55%, transparent);
+    border-radius: 6px; padding: 2px 4px;
+    background: color-mix(in hsl, var(--panel-2) 92%, transparent);
+  }
+
+  .g-card.g-new {
+    grid-template-rows: 1fr auto;
+    place-items: stretch;
+    border-style: dashed;
+    border-color: color-mix(in hsl, var(--border) 70%, transparent);
+    background:
+      linear-gradient(180deg, rgba(255,255,255,.02), rgba(0,0,0,.06)),
+      var(--panel);
+    text-align: center;
+    cursor: pointer;
+  }
+  .g-card.g-new .g-thumb.plus {
+    display: grid; place-items: center; aspect-ratio: 16/9;
+    background:
+      repeating-linear-gradient(45deg, color-mix(in hsl, var(--panel-2) 70%, transparent) 0 12px,
+                                     color-mix(in hsl, var(--panel-2) 88%, transparent) 12px 24px),
+      var(--panel-2);
+  }
+  .g-card.g-new .g-thumb.plus span {
+    font: 600 40px/1 system-ui; opacity: .85;
+    color: var(--accent);
+    filter: drop-shadow(0 6px 22px color-mix(in hsl, var(--accent) 35%, transparent));
+  }
+  .g-card.g-new .g-meta { justify-content: center; }
+  .g-card.g-new .g-name { color: var(--muted); }
+
+  .g-card:focus {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+  .g-card::before {
+    content: ""; position: absolute; inset: -1px; border-radius: 16px;
+    background: linear-gradient(135deg, color-mix(in hsl, var(--accent) 42%, transparent), transparent 40%);
+    -webkit-mask: 
+      linear-gradient(#000 0 0) content-box, 
+      linear-gradient(#000 0 0);
+    mask: 
+      linear-gradient(#000 0 0) content-box, 
+      linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor; mask-composite: exclude;
+    padding: 1px; pointer-events: none; opacity: .18;
+    transition: opacity .2s ease;
+  }
+  .g-card:hover::before { opacity: .38; }
+</style>
+</head>
+<body>
+
+<!-- ===== Gallery View (Landing) ===== -->
+<section id="galleryView" aria-label="Gallery" style="display:none;">
+  <div class="g-shell">
+    <header class="g-header">
+      <div class="g-title">
+        <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M4 7h16v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7z" fill="currentColor" opacity=".24"></path>
+          <path d="M4 7l3-4h10l3 4" stroke="currentColor" fill="none"></path>
+        </svg>
+        <h1>My Canvases</h1>
+      </div>
+      <div class="g-sub">
+        <span class="g-hint">Double-click a card to open • Press <kbd>F2</kbd> or <kbd>Backspace</kbd> to rename • <kbd>Delete</kbd> to remove</span>
+      </div>
+    </header>
+    <div id="galleryRoot" class="g-root"></div>
+  </div>
+</section>
+
+<!-- ===== Canvas Workspace ===== -->
+<div id="canvasContainer">
+  <canvas id="c"></canvas>
+  <canvas id="navOverlay"></canvas>
+</div>
+
+<div class="chrome">
+  <div id="poseHud" aria-hidden="true" style="left:-9999px;top:-9999px;">
+    <div id="animRow" class="pose-row" style="gap:8px;">
+      <label class="mini">Anim</label>
+      <select id="animType" class="hud-input">
+        <option value="none">None</option>
+        <option value="spin">Spin</option>
+        <option value="sway">Sway</option>
+        <option value="pulse">Pulse</option>
+        <option value="bounce">Bounce</option>
+        <option value="orbit">Orbit</option>
+        <option value="shake">Shake</option>
+      </select>
+      <label id="animSpeedWrap"><span class="mini">Speed</span><input id="animSpeed" class="hud-input" type="number" step="0.1" value="1" style="width:64px;"></label>
+      <label id="animAmountWrap" style="display:none;"><span class="mini">Amt</span><input id="animAmount" class="hud-input" type="number" step="0.05" value="0.15" style="width:64px;"></label>
+      <label id="animAxisWrap" style="display:none;"><span class="mini">Axis</span>
+        <select id="animAxis" class="hud-input">
+          <option value="xy">XY</option>
+          <option value="x">X</option>
+          <option value="y">Y</option>
+        </select>
+      </label>
+      <span id="animRadiusWrap" class="stack" style="display:none;">
+        <label><span class="mini">Rx</span><input id="animRadiusX" class="hud-input" type="number" step="1" value="12" style="width:60px;"></label>
+        <label><span class="mini">Ry</span><input id="animRadiusY" class="hud-input" type="number" step="1" value="12" style="width:60px;"></label>
+      </span>
+      <label id="animRotWrap" style="display:none;"><span class="mini">RotAmt</span><input id="animRotAmt" class="hud-input" type="number" step="0.01" value="0.02" style="width:64px;"></label>
+      <label id="animPosWrap" style="display:none;"><span class="mini">PosAmt</span><input id="animPosAmt" class="hud-input" type="number" step="1" value="2" style="width:64px;"></label>
+    </div>
+
+    <div id="styleRow" class="pose-row" style="margin-top:6px; gap:8px;">
+      <label class="mini">Style</label>
+      <select id="styleType" class="hud-input">
+        <option value="none">None</option>
+        <option value="width">Width Pulse</option>
+        <option value="opacity">Opacity Pulse</option>
+        <option value="glow">Glow Pulse</option>
+        <option value="hue">Hue Shift</option>
+        <option value="dash">Dash Flow</option>
+      </select>
+      <label id="styleSpeedWrap"><span class="mini">Speed</span><input id="styleSpeed" class="hud-input" type="number" step="0.1" value="1" style="width:64px;"></label>
+      <label id="styleAmountWrap" style="display:none;"><span class="mini">Amt</span><input id="styleAmount" class="hud-input" type="number" step="0.05" value="0.15" style="width:64px;"></label>
+      <label id="styleHueWrap" style="display:none;"><span class="mini">Hue°</span><input id="styleHue" class="hud-input" type="number" step="1" value="30" style="width:64px;"></label>
+      <label id="styleRateWrap" style="display:none;"><span class="mini">px/s</span><input id="styleRate" class="hud-input" type="number" step="1" value="120" style="width:64px;"></label>
+    </div>
+  </div>
+</div>
+
+<!-- Tool properties popover -->
+<div id="toolProps" role="dialog" aria-label="Tool properties">
+  <div class="prop-col">
+    <div class="prop-row" style="justify-content:flex-end; gap:6px;">
+      <button id="propPin" class="btn" style="padding:4px 8px;">Pin</button>
+    </div>
+
+    <div class="prop-row" data-prop="brush">
+      <div class="label">Brush</div>
+      <select id="brush">
+        <option value="pen">Pen</option>
+        <option value="dashed">Dashed</option>
+        <option value="marker">Marker</option>
+        <option value="glow">Glow</option>
+      </select>
+    </div>
+
+    <div class="prop-row" data-prop="color">
+      <div class="label">Color</div>
+      <div class="stack color-stack">
+        <input id="color" type="color" value="#88ccff" />
+        <button class="btn eyedrop" id="eyedropBtn" type="button">Pick</button>
+      </div>
+    </div>
+    <div class="prop-row" style="justify-content:flex-start;" data-prop="color-swatches">
+      <div class="swatch-host" id="swatchHost"></div>
+    </div>
+
+    <div class="prop-row" data-prop="size">
+      <div class="label">Size</div>
+      <div class="stack">
+        <input id="size" type="range" min="1" max="48" step="1" value="6" />
+        <span id="sizev" class="badge">6 px</span>
+      </div>
+    </div>
+
+    <div class="prop-row" data-prop="opacity">
+      <div class="label">Opacity</div>
+      <div class="stack">
+        <input id="opacity" type="range" min="5" max="100" step="1" value="100" />
+        <span id="opacityv" class="badge">100%</span>
+      </div>
+    </div>
+
+    <div class="prop-row" data-prop="fill">
+      <div class="label">Fill</div>
+      <label class="stack"><input id="fill" type="checkbox" /> Fill shapes</label>
+    </div>
+  </div>
+</div>
+
+<!-- Tool dock -->
+<div class="dock" id="dock" aria-label="Tools">
+  <button data-tool="select" class="tool" title="Select" aria-label="Select">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+      <path d="M4 4l7 14 2-6 6-2-15-6z" />
+      <path d="M3 3h4M9 3h4M15 3h3M21 7v4M21 13v4M17 21h-4M11 21H7M3 17v-4M3 11V7" />
+    </svg>
+  </button>
+
+  <button data-tool="draw" class="tool active" title="Draw" aria-label="Draw">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+  </button>
+  <button data-tool="paint" class="tool" title="Paint (Bucket)" aria-label="Paint">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+      <path d="M3 12l6-6 9 9-6 6z"/>
+      <path d="M19 13.5a2.5 2.5 0 1 1-5 0c0-1.5 2.5-4 2.5-4s2.5 2.5 2.5 4z"/>
+    </svg>
+  </button>
+  <button data-tool="erase" class="tool" title="Erase" aria-label="Erase">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="m19 5-7 7-5-5 7-7z" transform="translate(-2,6)"/><path d="M7 21h10"/></svg>
+  </button>
+  <button data-tool="delete" class="tool" title="Delete" aria-label="Delete">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 6h18"/><path d="M8 6v14a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2V6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+  </button>
+
+  <div class="sep"></div>
+
+  <button data-tool="pan" class="tool" title="Pan" aria-label="Pan">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+      <path d="M8 11V6a1 1 0 0 1 2 0v5" />
+      <path d="M10 10V5a1 1 0 0 1 2 0v5" />
+      <path d="M12 9V4a1 1 0 0 1 2 0v5" />
+      <path d="M14 10V6a1 1 0 0 1 2 0v4" />
+      <path d="M8 11c-1.5 1.5-1.5 4.5 0 6l2 2h4l2-3-1-3" />
+      <path d="M8 13l-2-1" />
+    </svg>
+  </button>
+
+  <button data-tool="line" class="tool" title="Line" aria-label="Line">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 20 20 4"/></svg>
+  </button>
+  <button data-tool="rect" class="tool" title="Rect" aria-label="Rect">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
+  </button>
+  <button data-tool="ellipse" class="tool" title="Ellipse" aria-label="Ellipse">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"><ellipse cx="12" cy="12" rx="8" ry="6"/></svg>
+  </button>
+
+  <div class="sep"></div>
+
+  <button id="undo" class="tool" title="Undo" aria-label="Undo">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 7v6h6"/><path d="M21 17a8 8 0 0 0-13-5l-5 5"/></svg>
+  </button>
+  <button id="redo" class="tool" title="Redo" aria-label="Redo">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21 7v6h-6"/><path d="M3 17a8 8 0 0 1 13-5l5 5"/></svg>
+  </button>
+
+  <div class="sep"></div>
+
+  <button id="clear" class="tool" title="Clear" aria-label="Clear">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+      <path d="M12 2 L12 10" />
+      <path d="M7 15 Q12 12 17 15 L16 20 H8 L7 15 Z" />
+      <path d="M9 15 L9 20" />
+      <path d="M12 15 L12 20" />
+      <path d="M15 15 L15 20" />
+    </svg>
+  </button>
+
+  <button id="backToGallery" class="tool" title="Back to Gallery" aria-label="Back to Gallery">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+      <path d="M3 12h18M9 6l-6 6 6 6"/>
+    </svg>
+  </button>
+</div>
+
+<!-- Context menu -->
+<div id="ctxMenu" role="menu" aria-hidden="true">
+  <div id="ctxResetView" class="item" role="menuitem">↺ Reset View</div>
+  <div id="ctxDeleteSel" class="item" role="menuitem">Delete Selected</div>
+  <div class="sep"></div>
+  <div id="ctxSavePNG" class="item" role="menuitem">💾 Save PNG</div>
+</div>
+
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>

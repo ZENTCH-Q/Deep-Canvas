@@ -1,0 +1,72 @@
+{
+  "name": "deep-canvas",
+  "version": "1.0.0",
+  "description": "Deep Canvas — desktop",
+  "main": "main.js",
+  "type": "commonjs",
+  "author": "You",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "dev": "electron .",
+    "pack": "electron-builder --dir",
+    "build:win": "electron-builder --win nsis",
+    "build:mac": "electron-builder --mac dmg zip",
+    "build:all": "electron-builder -mwl"
+  },
+  "devDependencies": {
+    "electron": "^30.0.0",
+    "electron-builder": "^24.6.3"
+  },
+  "build": {
+    "appId": "com.yourname.deepcanvas",
+    "productName": "Deep Canvas",
+    "files": [
+      "main.js",
+      "preload.js",
+      "app/**/*"
+    ],
+    "asar": true,
+    "asarUnpack": [
+      "app/src/workers/**"
+    ],
+    "directories": {
+      "buildResources": "build",
+      "output": "dist"
+    },
+    "mac": {
+      "icon": "build/icon.icns",
+      "category": "public.app-category.graphics-design",
+      "target": [
+        "dmg",
+        "zip"
+      ]
+    },
+    "win": {
+      "icon": "build/icon.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "linux": {
+      "icon": "build",
+      "target": [
+        "AppImage",
+        "zip"
+      ],
+      "category": "Graphics"
+    }
+  }
+}
