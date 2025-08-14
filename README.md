@@ -3,7 +3,7 @@
 Fast, offline **infinite canvas** for sketching, whiteboarding, and motion-style doodles.  
 Privacy-first desktop app — no accounts, no cloud, everything saved locally.
 
-[https://github.com/<you>/<repo> (replace me)](https://github.com/ZENTCH-Q/Deep-Canvas.git)
+https://github.com/ZENTCH-Q/Deep-Canvas.git
 
 ![demo](docs/demo.gif) <!-- add a short screen recording later -->
 
