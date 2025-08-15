@@ -222,8 +222,16 @@ function initColorUI(state){
   const eyeBtn = document.getElementById('eyedropBtn');
   const swHost = document.getElementById('swatchHost');
 
+  const paintBall = document.querySelector('[data-tool="paint"] .paint-ball');
+  const setPaintBall = (hex) => {
+    if (!paintBall) return;
+    document.documentElement.style.setProperty('--ui-color', hex);
+    paintBall.style.backgroundColor = hex; // fallback
+  };
+
   let current = toHex6(state.settings?.color || input?.value || '#88ccff') || '#88ccff';
   if (input) input.value = current;
+  setPaintBall(current); // init sphere color
 
   const swAPI = buildSwatches(swHost, () => current, (hex) => setColor(hex));
 
@@ -234,6 +242,8 @@ function initColorUI(state){
     if (input && input.value.toLowerCase() !== h) input.value = h;
     state.settings.color = h;
     if (push) pushRecent(h);
+
+    setPaintBall(h); 
 
     markDirty(); scheduleRender();
     swAPI.highlight();
@@ -260,7 +270,10 @@ function initColorUI(state){
 
   setInterval(() => {
     const fromState = toHex6(state.settings?.color);
-    if (fromState && fromState !== current) setColor(fromState, { push:false });
+    if (fromState && fromState !== current) {
+      setColor(fromState, { push:false });
+      setPaintBall(fromState);
+    }
   }, 800);
 }
 

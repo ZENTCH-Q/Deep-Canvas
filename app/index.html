@@ -24,7 +24,28 @@
 
     --marquee-stroke:    #9fb3c8;
     --marquee-fill:      rgba(159,179,200,0.18);
+    --ui-color: #88ccff;
   }
+
+ .paint-ball {
+   width: 18px;
+   height: 18px;
+   border-radius: 50%;
+   border: 1px solid var(--border);
+   background:
+     radial-gradient(120% 120% at 30% 28%, rgba(255,255,255,0.25) 0 20%, transparent 40%)
+     radial-gradient(90% 90% at 70% 75%,
+       color-mix(in oklab, var(--ui-color) 78%, black 18%) 0%,
+       color-mix(in oklab, var(--ui-color) 100%, black 26%) 65%,
+       color-mix(in oklab, var(--ui-color) 100%, black 34%) 100%);
+   box-shadow:
+     inset 0 0 0 1px color-mix(in oklab, var(--ui-color) 60%, black 35%),
+     inset 0 -2px 4px rgba(0,0,0,.18);
+ }
+ .tool.active .paint-ball {
+   outline: 2px solid var(--accent);
+   outline-offset: 2px;
+ }
 
   html, body { height:100%; margin:0; }
   body {
@@ -465,11 +486,8 @@
   <button data-tool="draw" class="tool active" title="Draw" aria-label="Draw">
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
   </button>
-  <button data-tool="paint" class="tool" title="Paint (Bucket)" aria-label="Paint">
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-      <path d="M3 12l6-6 9 9-6 6z"/>
-      <path d="M19 13.5a2.5 2.5 0 1 1-5 0c0-1.5 2.5-4 2.5-4s2.5 2.5 2.5 4z"/>
-    </svg>
+  <button data-tool="paint" class="tool" title="Paint" aria-label="Paint">
+    <span class="paint-ball" aria-hidden="true"></span>
   </button>
   <button data-tool="erase" class="tool" title="Erase" aria-label="Erase">
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="m19 5-7 7-5-5 7-7z" transform="translate(-2,6)"/><path d="M7 21h10"/></svg>
