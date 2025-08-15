@@ -12,10 +12,8 @@ function tolWorld(camera, fast = false){
   return fast ? base * 1.6 : base;
 }
 function pickEpsilon(camera, fast){
-  const target = tolWorld(camera, fast);
-  const levels = [0.25, 0.5, 1, 2, 4, 8];
-  for (let i=0;i<levels.length;i++) if (levels[i] >= target) return levels[i];
-  return levels[levels.length-1];
+  const pxTol = fast ? 0.6 : 0.3;
+  return pxTol / Math.max(1e-8, camera.scale);
 }
 
 function hash32(s){
