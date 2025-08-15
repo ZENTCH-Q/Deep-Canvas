@@ -5,14 +5,16 @@ Privacy-first desktop app — no accounts, no cloud, everything saved locally.
 
 https://github.com/ZENTCH-Q/Deep-Canvas.git
 
-![demo](docs/demo.gif) <!-- add a short screen recording later -->
+Animation Showcase:
+
+
 ![ezgif com-optimize](https://github.com/user-attachments/assets/2e5f2db3-d912-4813-b81c-9ea00ab305c2)
 
 ---
+Extreme Zoom:
 
-https://github.com/user-attachments/assets/3100fbfb-1c7b-46aa-b08e-c56a8ae421fd
 
-
+![DeepCanvas2025-08-1603-42-39-ezgif com-video-to-gif-converter](https://github.com/user-attachments/assets/5af8d46b-5c67-4f8d-b4d6-d52f24cc0758)
 
 ## ✨ Features
 
