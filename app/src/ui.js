@@ -264,6 +264,22 @@ function initColorUI(state){
   }, 800);
 }
 
+function strokeBBoxWorld(state, s){
+  const bake = state?._bake;
+  let bb = s?.bbox; if (!bb) return null;
+  if (bake?.active && s._baked === false){
+    const ss=bake.s, tx=bake.tx, ty=bake.ty;
+    bb = { minx: bb.minx*ss+tx, miny: bb.miny*ss+ty, maxx: bb.maxx*ss+tx, maxy: bb.maxy*ss+ty };
+  }
+  return bb;
+}
+function bboxCenter(bb){
+  return {
+    cx: (bb.minx + bb.maxx) * 0.5,
+    cy: (bb.miny + bb.maxy) * 0.5
+  };
+}
+
 /* ---------- main UI ---------- */
 export function initUI({ state, canvas, camera, setTool }){
   // Tool buttons
@@ -694,6 +710,65 @@ export function initUI({ state, canvas, camera, setTool }){
   subscribe(updateHud);
   window.addEventListener('resize', updateHud);
   setTimeout(updateHud, 0);
+
+  let wasTransforming = false;
+  const animReset = { active:false, saved:new Map() }; 
+
+  function _onTransformStart(){
+    if (animReset.active) return;
+    animReset.active = true;
+    animReset.saved.clear();
+
+    for (const s of (state.selection || [])) {
+      const layers = s?.react2?.anim?.layers;
+      if (layers && layers.length) {
+        const copy = layers.map(cloneAnimLayer).filter(Boolean);
+        if (copy.length) {
+          animReset.saved.set(s.id, copy);
+          s.react2 = s.react2 || {};
+          s.react2.anim = { layers: [] };
+        }
+      }
+    }
+    markDirty(); scheduleRender();
+  }
+
+  function _onTransformEnd(){
+    if (!animReset.active) return;
+    const newGroupId = 'g-' + (crypto?.randomUUID?.() || Math.random().toString(36).slice(2,10));
+
+    for (const [id, savedLayers] of animReset.saved) {
+      const s = state.strokes.find(st => st.id === id);
+      if (!s) continue;
+
+      const bb = strokeBBoxWorld(state, s);
+      const c  = bb ? bboxCenter(bb) : null;
+
+      const restored = savedLayers.map(L => {
+        const r = cloneAnimLayer(L); // keep user params
+        r.phase   = 0;               // reset phase like re-picking the type
+        r.enabled = true;
+        r.groupId = newGroupId;
+        if (c) r.pivot = { x: c.cx, y: c.cy };
+        return r;
+      });
+
+      s.react2 = s.react2 || {};
+      s.react2.anim = { layers: restored };
+    }
+
+    animReset.saved.clear();
+    animReset.active = false;
+    markDirty(); scheduleRender();
+  }
+
+  subscribe(() => {
+    const now = !!state._transformActive;
+    if (now && !wasTransforming) _onTransformStart();
+    if (!now && wasTransforming) _onTransformEnd();
+    wasTransforming = now;
+  });
+
 
   return { updatePosePanel: updateHud, updatePoseHud: updateHud };
 }

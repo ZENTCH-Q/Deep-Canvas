@@ -628,7 +628,8 @@ export function render(state, camera, ctx, canvasLike, opts = {}) {
     const baseW = Math.max(0.75 / Math.max(1, camera.scale), (s.w || 1));
     ctx.lineWidth = baseW;
     if (unbaked) { ctx.save(); ctx.transform(bake.s, 0, 0, bake.s, bake.tx, bake.ty); }
-    const axf = animXfFromLayers(s, state, tNow);
+    const interacting = !!(state._transformActive || state._drawingActive || state._erasingActive);
+    const axf = interacting ? null : animXfFromLayers(s, state, tNow);
     let animApplied = false;
     if (axf) {
       let cx, cy;
@@ -655,7 +656,11 @@ export function render(state, camera, ctx, canvasLike, opts = {}) {
       if (axf.tx || axf.ty) ctx.translate(axf.tx, axf.ty);
       animApplied = true;
     }
-    applyStyleLayers(ctx, camera, s, state, tNow, baseW);
+    if (!interacting) {
+      applyStyleLayers(ctx, camera, s, state, tNow, baseW);
+    } else {
+      applyStyleLayers(ctx, camera, s, state, 0, baseW);
+    }
     if (s.kind === 'path') {
       if (s.pts && s.n != null) {
         const viewTA = getLODView(s, camera, fast);
