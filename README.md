@@ -6,6 +6,7 @@ Privacy-first desktop app — no accounts, no cloud, everything saved locally.
 https://github.com/ZENTCH-Q/Deep-Canvas.git
 
 ![demo](docs/demo.gif) <!-- add a short screen recording later -->
+![ezgif com-optimize](https://github.com/user-attachments/assets/2e5f2db3-d912-4813-b81c-9ea00ab305c2)
 
 ---
 
