@@ -9,6 +9,7 @@ import { saveViewportPNG } from './export.js';
 import { removeStroke } from './strokes.js';
 import { PanTool } from './tools/pan.js';
 import { attachHistory } from './history.js';
+import { initGalleryView, showGallery, hideGallery } from './gallery.js';
 
 import {
   listDocs, getDoc, createDoc,
@@ -24,8 +25,9 @@ ctx.imageSmoothingEnabled = false;
 const camera = makeCamera(1.25, 0, 0);
 state._freezing = false;
 state._freezeBmp = null;
+
+// DOM refs
 const galleryView  = document.getElementById('galleryView');
-const galleryRoot  = document.getElementById('galleryRoot');
 const dockEl       = document.getElementById('dock');
 const toolPropsEl  = document.getElementById('toolProps');
 const poseHudEl    = document.getElementById('poseHud');
@@ -33,22 +35,56 @@ const backBtn      = document.getElementById('backToGallery');
 
 let currentDocId   = null;
 let currentDocName = 'Untitled';
-let _pendingSave   = null; 
+let _pendingSave   = null;
+
+let galleryCtl = null;
+
+function docToItem(d) {
+  const w = (d.data?.size?.w) || d.data?.width  || 1600;
+  const h = (d.data?.size?.h) || d.data?.height || 1000;
+  return { id: d.id, name: d.name || 'Untitled', width: w, height: h, thumb: d.thumb };
+}
+
+function initGalleryFromDocs() {
+  galleryCtl = initGalleryView({
+    getItems() {
+      return listDocs().map(docToItem);
+    },
+    onOpen(id) {
+      openDoc(id);
+    },
+    onRename(id, name) {
+      renameDoc(id, name);
+    },
+    onDelete(id) {
+      deleteDoc(id);
+    },
+    onCreateNew() {
+      const created = createDoc('Untitled');
+      const d = (typeof created === 'string') ? getDoc(created) : created;
+      openDoc(d || created); 
+    },
+    afterReorder(items) {
+
+    }
+  });
+}
 
 function showCanvasView() {
-  if (galleryView) galleryView.style.display = 'none';
+  hideGallery();
   document.getElementById('canvasContainer').style.display = 'block';
   dockEl?.style && (dockEl.style.display = 'flex');
   toolPropsEl?.style && (toolPropsEl.style.display = '');
   poseHudEl?.style && (poseHudEl.style.display = 'none');
+  requestAnimationFrame(fitDockToCanvas);
+  requestAnimationFrame(fitDockToCanvas);
 }
 function showGalleryView() {
+  showGallery();
   document.getElementById('canvasContainer').style.display = 'none';
   dockEl?.style && (dockEl.style.display = 'none');
   toolPropsEl?.style && (toolPropsEl.style.display = 'none');
   poseHudEl?.style && (poseHudEl.style.display = 'none');
-  if (galleryView) galleryView.style.display = 'block';
-  renderGallery();
 }
 
 function blobToDataURL(blob) {
@@ -136,8 +172,8 @@ async function saveCurrentDoc({ captureThumb = true } = {}) {
       const blob = await saveViewportPNG(canvas, ctx, camera, state, 0.65, 1);
       const dataURL = await blobToDataURL(blob);
       doc.thumb = dataURL;
-    } catch {
-    }
+      galleryCtl?.update({ id: currentDocId, thumb: dataURL });
+    } catch {}
   }
 
   saveDocFull(doc);
@@ -154,6 +190,7 @@ function scheduleDocAutosave() {
 
 async function backToGallery() {
   if (!currentDocId) { showGalleryView(); return; }
+  const idAtReturn = currentDocId;
 
   if (_pendingSave) { try { await _pendingSave; } catch {} }
   _pendingSave = (async () => {
@@ -161,181 +198,18 @@ async function backToGallery() {
   })();
   try { await _pendingSave; } finally { _pendingSave = null; }
 
+ const d = getDoc(idAtReturn);
+ if (d) {
+   const exists = galleryCtl?.list().some(it => it.id === d.id);
+   if (!exists) galleryCtl?.add(docToItem(d));
+   else galleryCtl?.update({ id: d.id, thumb: d.thumb, name: d.name, width: d.data?.size?.w, height: d.data?.size?.h });
+ }
+
   currentDocId = null;
   showGalleryView();
+  galleryCtl?.rerender();
 }
-
-backBtn?.addEventListener('click', (e) => {
-  e.preventDefault();
-  backToGallery();
-});
-
-function focusCardEl(el) { try { el?.focus?.(); } catch {} }
-
-function renderGallery() {
-  if (!galleryRoot) return;
-  const docs = listDocs();
-
-  const gridEl = document.createElement('div');
-  gridEl.className = 'g-grid';
-
-  // New canvas card
-  const newBtn = document.createElement('button');
-  newBtn.type = 'button';
-  newBtn.className = 'g-card g-new';
-  newBtn.setAttribute('aria-label','Create new canvas');
-  newBtn.innerHTML = `
-    <div class="g-thumb plus"><span>＋</span></div>
-    <div class="g-meta"><span class="g-name">New Canvas</span></div>
-  `;
-  newBtn.addEventListener('click', () => {
-    const doc = createDoc('Untitled');
-    openDoc(doc);
-  });
-  const newWrap = document.createElement('div');
-  newWrap.className = 'g-item';
-  newWrap.appendChild(newBtn);
-  gridEl.appendChild(newWrap);
-
-  // Existing docs
-  for (const d of docs) {
-    const wrap = document.createElement('div');
-    wrap.className = 'g-item';
-
-    const card = document.createElement('div');
-    card.className = 'g-card';
-    card.tabIndex = 0;
-    card.dataset.id = d.id;
-
-    const thumb = document.createElement('div');
-    thumb.className = 'g-thumb' + (d.thumb ? '' : ' no-thumb');
-    if (d.thumb) {
-      const img = document.createElement('img');
-      img.alt = '';
-      img.decoding = 'async';
-      img.loading = 'lazy';
-      img.src = d.thumb;
-      thumb.appendChild(img);
-    }
-
-    const acts = document.createElement('div');
-    acts.className = 'g-actions';
-    acts.innerHTML = `
-      <button class="g-act g-rename" title="Rename" aria-label="Rename">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 21h6"/><path d="M7 17l10-10 3 3-10 10H7v-3z"/></svg>
-      </button>
-      <button class="g-act g-del" title="Delete" aria-label="Delete">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 6h18"/><path d="M8 6v14a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2V6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
-      </button>
-    `;
-
-    const meta = document.createElement('div');
-    meta.className = 'g-meta';
-    const nameEl = document.createElement('div');
-    nameEl.className = 'g-name';
-    nameEl.textContent = d.name || 'Untitled';
-    nameEl.title = 'Double-click to rename';
-    nameEl.spellcheck = false;
-    meta.appendChild(nameEl);
-
-    card.appendChild(thumb);
-    card.appendChild(acts);
-    card.appendChild(meta);
-    wrap.appendChild(card);
-    gridEl.appendChild(wrap);
-    card.addEventListener('dblclick', (e) => { e.preventDefault(); openDoc(d.id); });
-    function startRename() {
-      nameEl.setAttribute('contenteditable','true');
-      nameEl.focus();
-      document.getSelection()?.selectAllChildren?.(nameEl);
-    }
-    function commitRename() {
-      const val = (nameEl.textContent || '').trim() || 'Untitled';
-      renameDoc(d.id, val);
-      nameEl.removeAttribute('contenteditable');
-      renderGallery();
-    }
-    acts.querySelector('.g-rename')?.addEventListener('click', (e) => { e.stopPropagation(); startRename(); });
-    nameEl.addEventListener('dblclick', (e) => { e.stopPropagation(); startRename(); });
-    nameEl.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') { e.preventDefault(); commitRename(); }
-      if (e.key === 'Escape') { e.preventDefault(); nameEl.removeAttribute('contenteditable'); nameEl.textContent = d.name || 'Untitled'; }
-    });
-    nameEl.addEventListener('blur', commitRename);
-    acts.querySelector('.g-del')?.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const sure = confirm(`Delete “${d.name || 'Untitled'}”? This can’t be undone.`);
-      if (!sure) return;
-      deleteDoc(d.id);
-      renderGallery();
-    });
-
-    card.addEventListener('keydown', (e) => {
-      if ((e.key === 'Backspace' || e.key === 'F2') && document.activeElement === card) {
-        e.preventDefault();
-        startRename();
-        return;
-      }
-      if (e.key === 'Delete' && document.activeElement === card) {
-        e.preventDefault();
-        const sure = confirm(`Delete “${d.name || 'Untitled'}”?`);
-        if (!sure) return;
-        deleteDoc(d.id);
-        renderGallery();
-      }
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        openDoc(d.id);
-      }
-    });
-  }
-
-  galleryRoot.innerHTML = '';
-  galleryRoot.appendChild(gridEl);
-  focusCardEl(galleryRoot.querySelector('.g-card'));
-}
-
-async function beginFreeze() {
-  try {
-    state._freezeBmp?.close?.();
-    state._freezeBmp = await createImageBitmap(canvas);
-    state._freezing = true;
-    scheduleRender();
-  } catch {}
-}
-function endFreeze() {
-  try { state._freezeBmp?.close?.(); } catch {}
-  state._freezeBmp = null;
-  state._freezing = false;
-  scheduleRender();
-}
-
-let indexWorker = null;
-let indexJobGen = 0;
-function ensureIndexWorker(){
-  if (indexWorker) return indexWorker;
-  indexWorker = new Worker(new URL('./workers/spatial_index_worker.js', import.meta.url), { type:'module' });
-  indexWorker.onmessage = (ev) => {
-    const msg = ev.data || {};
-    if (msg.type !== 'rebuilt') return;
-    if (typeof msg.gen !== 'number' || msg.gen < indexJobGen) return;
-    if (typeof msg.count !== 'number' || msg.count !== state.strokes.length) return;
-    applyWorkerIndex(grid, msg, state.strokes);
-    endFreeze();
-    scheduleRender();
-  };
-  return indexWorker;
-}
-function rebuildIndexAsync(){
-  const w = ensureIndexWorker();
-  w.postMessage({
-    type: 'rebuild',
-    gen: ++indexJobGen,
-    count: state.strokes.length,
-    cell: grid.cell,
-    strokes: state.strokes.map(s => ({ bbox: s.bbox }))
-  });
-}
+backBtn?.addEventListener('click', (e) => { e.preventDefault(); backToGallery(); });
 
 let currentTool = createTool(state.tool, { canvas, ctx, overlay, camera, state });
 const panOverrideTool = new PanTool({
@@ -367,8 +241,14 @@ function resize(){
     overlay.style.height = canvas.clientHeight + 'px';
   }
   scheduleRender();
+  fitDockToCanvas();
+  setTimeout(fitDockToCanvas, 0);
+  document.fonts?.ready?.then?.(fitDockToCanvas);
 }
 new ResizeObserver(resize).observe(canvas);
+new ResizeObserver(() => fitDockToCanvas()).observe(document.getElementById('canvasContainer') || document.body);
+window.addEventListener('resize', fitDockToCanvas);
+window.addEventListener('orientationchange', fitDockToCanvas);
 
 canvas.addEventListener('pointerdown', e => { panOverrideTool.onPointerDown?.(e); currentTool.onPointerDown?.(e); });
 canvas.addEventListener('pointermove', e => { panOverrideTool.onPointerMove?.(e); currentTool.onPointerMove?.(e); });
@@ -474,7 +354,7 @@ function applyWheelZoom(){
     whenRenormalized().then(() => {
       if (started) rebuildIndexAsync();
       applyAdaptiveGridCell();
-      endNavSnapshot();    
+      endNavSnapshot();
       scheduleRender();
     });
   }, WHEEL_IDLE_MS);
@@ -517,6 +397,7 @@ function applyCameraFromURL(){
     scheduleRender();
   }
 }
+
 function applyAdaptiveGridCell(){
   const vw = visibleWorldRect(camera, canvas);
   const worldW = Math.max(16, vw.maxx - vw.minx);
@@ -526,6 +407,82 @@ function applyAdaptiveGridCell(){
     rebuildIndexAsync();
   }
 }
+
+let indexWorker = null;
+let indexJobGen = 0;
+state._indexBusy = false;
+function ensureIndexWorker(){
+  if (indexWorker) return indexWorker;
+  indexWorker = new Worker(new URL('./workers/spatial_index_worker.js', import.meta.url), { type:'module' });
+  indexWorker.onmessage = (ev) => {
+    const msg = ev.data || {};
+    if (msg.type !== 'rebuilt') return;
+    if (typeof msg.gen !== 'number' || msg.gen < indexJobGen) return;
+    if (typeof msg.count !== 'number' || msg.count !== state.strokes.length) return;
+    applyWorkerIndex(grid, msg, state.strokes);
+    state._indexBusy = false; 
+    endFreeze();
+    scheduleRender();
+  };
+  return indexWorker;
+}
+function rebuildIndexAsync(){
+  const w = ensureIndexWorker();
+  state._indexBusy = true;
+  w.postMessage({
+    type: 'rebuild',
+    gen: ++indexJobGen,
+    count: state.strokes.length,
+    cell: grid.cell,
+    strokes: state.strokes.map(s => ({ bbox: s.bbox }))
+  });
+}
+
+let _dockFitRAF = 0;
+function fitDockToCanvas() {
+  if (_dockFitRAF) cancelAnimationFrame(_dockFitRAF);
+  _dockFitRAF = requestAnimationFrame(() => {
+    const dock = document.getElementById('dock');
+    const cont = document.getElementById('canvasContainer');
+    if (!dock || !cont) return;
+
+    dock.style.setProperty('--dock-scale', '1');
+    const avail = Math.max(320, (cont.clientWidth || window.innerWidth) - 28 * 2);
+    const natural = Math.ceil(dock.scrollWidth);
+    let scale = Math.min(1, avail / Math.max(1, natural));
+    scale = Math.max(0.55, scale); 
+
+    dock.style.setProperty('--dock-scale', String(scale));
+    document.documentElement.style.setProperty('--dock-scale', String(scale));
+
+    for (let i = 0; i < 6; i++) {
+      const w = Math.ceil(dock.getBoundingClientRect().width);
+      if (w <= avail || scale <= 0.55) break;
+      scale = Math.max(0.55, scale - 0.02);
+      dock.style.setProperty('--dock-scale', String(scale));
+      document.documentElement.style.setProperty('--dock-scale', String(scale));
+    }
+  });
+}
+
+
+async function beginFreeze() {
+  try {
+    state._freezeBmp?.close?.();
+    state._freezeBmp = await createImageBitmap(canvas);
+    state._freezing = true;
+    scheduleRender();
+  } catch {}
+}
+function endFreeze() {
+  try { state._freezeBmp?.close?.(); } catch {}
+  state._freezeBmp = null;
+  state._freezing = false;
+  scheduleRender();
+}
+
+let currentToolInstance = null;
+let dprInitDone = false;
 
 const uiAPI = initUI({
   state, canvas, camera,
@@ -560,6 +517,10 @@ rebuildIndexAsync();
 applyCameraFromURL();
 window.addEventListener('hashchange', applyCameraFromURL);
 attachHistory(state);
+initGalleryFromDocs();
+resize();
+scheduleRender();
+showGalleryView();
 
 const ctxMenu = document.getElementById('ctxMenu');
 const ctxResetView = document.getElementById('ctxResetView');
@@ -620,26 +581,6 @@ ctxDeleteSel?.addEventListener('click', () => {
   st.history?.pushDeleteGroup?.(sel, idxs);
   hideCtxMenu();
 });
-
-function strokeHasAnimLayers(st){
-  return (st?.react2?.anim?.layers || []).some(l => l && l.enabled && l.type && l.type !== 'none');
-}
-function strokeHasStyleLayers(st){
-  return (st?.react2?.style?.layers || []).some(l => l && l.enabled && l.type && l.type !== 'none');
-}
-function needsAnimFrame(st){
-  if (!st) return false;
-  const arr = st.strokes || [];
-  for (let i=0;i<arr.length;i++){
-    const s = arr[i];
-    if (strokeHasAnimLayers(s) || strokeHasStyleLayers(s)) return true;
-  }
-  return false;
-}
-(function tick(){
-  if (needsAnimFrame(state)) scheduleRender();
-  requestAnimationFrame(tick);
-})();
 
 ctxSavePNG?.addEventListener('click', async () => {
   const blob = await saveViewportPNG(canvas, ctx, camera, state, 1, dpr);
@@ -706,22 +647,22 @@ export function openDoc(docOrId) {
   scheduleRender();
 }
 
-document.addEventListener('keydown', (e) => {
-  if (!galleryView || galleryView.style.display === 'none') return;
-  const isBack = e.key === 'Backspace';
-  const isF2   = e.key === 'F2';
-  if ((isBack || isF2) && document.activeElement?.closest?.('#galleryRoot')) {
-    e.preventDefault();
-    const focusedCard = document.activeElement.closest('.g-card');
-    if (!focusedCard) return;
-    const nameEl = focusedCard.querySelector('.g-name');
-    if (!nameEl) return;
-    nameEl.setAttribute('contenteditable','true');
-    nameEl.focus();
-    document.getSelection()?.selectAllChildren?.(nameEl);
+function strokeHasAnimLayers(st){
+  return (st?.react2?.anim?.layers || []).some(l => l && l.enabled && l.type && l.type !== 'none');
+}
+function strokeHasStyleLayers(st){
+  return (st?.react2?.style?.layers || []).some(l => l && l.enabled && l.type && l.type !== 'none');
+}
+function needsAnimFrame(st){
+  if (!st) return false;
+  const arr = st.strokes || [];
+  for (let i=0;i<arr.length;i++){
+    const s = arr[i];
+    if (strokeHasAnimLayers(s) || strokeHasStyleLayers(s)) return true;
   }
-});
-
-resize();          
-scheduleRender(); 
-showGalleryView();
+  return false;
+}
+(function tick(){
+  if (needsAnimFrame(state)) scheduleRender();
+  requestAnimationFrame(tick);
+})();

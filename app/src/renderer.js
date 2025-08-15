@@ -35,7 +35,7 @@ function seedFromId(id, salt){ return rand01FromId(`${id}:${salt}`) * Math.PI * 
   if (shape==='square')   return Math.sign(Math.sin(x));
   if (shape==='triangle'){ const s = (x/Math.PI)%2; return 1 - 2*Math.abs(s-1); }
   if (shape==='saw')     { const s=(x/(2*Math.PI))%1; return (s*2)-1; }
-  return Math.sin(x); // sine default
+  return Math.sin(x); 
 }
 
 function readCSSVar(name, fallback) {
@@ -61,7 +61,7 @@ function getTheme(state) {
   };
 }
 
-export function applyBrushStyle(ctx, camera, s, fast) {
+export function applyBrushStyle(ctx, camera, s, fast, dpr = 1) {
   ctx.setLineDash([]);
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
@@ -148,7 +148,7 @@ function animXfFromLayers(s, _state, t){
         break;
       }
       case 'pendulum': {
-        const ar = (+L.amountRot || 0.35) * MOD;      // radians peak
+        const ar = (+L.amountRot || 0.35) * MOD;    
         const shape = L.shape || 'sine';
         theta += ar * lfo(shape, t, spd, ph);
         break;
@@ -281,11 +281,9 @@ function applyStyleLayers(ctx, camera, s, _state, t, baseW, dpr = 1){
         break;
       }
       case 'dash': {
-        // Effective scale factor from current CTM; fallback to camera.scale*dpr
         let k = Math.max(1e-8, camera.scale * Math.max(1, dpr));
         try {
           const m = ctx.getTransform();
-          // isotropic approx – good enough for line dash
           k = Math.max(1e-8, Math.hypot(m.a, m.b));
         } catch {}
 
@@ -303,13 +301,12 @@ function applyStyleLayers(ctx, camera, s, _state, t, baseW, dpr = 1){
             offset: patternLenWorld ? (off % patternLenWorld) : off
           };
         } else {
-          // back-compat: L.rate was px/s
           const ratePxPerSec = ((+L.rate || 120) * (+L.speed || 1)) * MOD;
           const dashScreenPx = Math.max(2, (s.w || 1) * 2.2);
           const dashLenWorld = dashScreenPx / k;
           const patternLenWorld = dashLenWorld * (1 + gapFactor);
 
-          const off = -(t * (ratePxPerSec / k)); // px/s ÷ (px/world) => world/s
+          const off = -(t * (ratePxPerSec / k));
           dash = {
             pattern: [dashLenWorld, dashLenWorld * gapFactor],
             offset: patternLenWorld ? (off % patternLenWorld) : off
@@ -331,7 +328,6 @@ function applyStyleLayers(ctx, camera, s, _state, t, baseW, dpr = 1){
       }
       case 'blur': {
         const amt = Math.abs((+L.amount || 1) * MOD);
-        // scale blur with zoom so it “feels” consistent in px
         const px = Math.max(0, amt * Math.abs(sig) * Math.max(0.5, (s.w||1) * camera.scale * 0.6));
         blurPx = Math.max(blurPx, px);
         break;
@@ -431,8 +427,9 @@ function perpDist(ax, ay, bx, by, px, py) {
 }
 function rdpSimplifyTA(pts, n, epsilon) {
   const Ctor = pts?.constructor || Float32Array;
+  const m = Math.max(0, Math.floor(n / STRIDE)); // number of points
   if (m <= 2 || !Number.isFinite(epsilon) || epsilon <= 0) {
-    const out = new Float32Array(n);
+    const out = new Ctor(n);
     out.set(pts.subarray(0, n));
     return out;
   }
@@ -541,7 +538,6 @@ function drawSelectionHandles(ctx, bb, camera, theme, dpr) {
     ctx.stroke();
   }
 
-  // Rotation: center at y0 - 28px (screen), leader starts 10px above the edge
   const rotY = y0 - ROT_OFFSET_PX * px;
   const leadStartY = y0 - LEADER_GAP_PX * px;
 
@@ -551,13 +547,11 @@ function drawSelectionHandles(ctx, bb, camera, theme, dpr) {
   ctx.lineTo(cx, rotY);
   ctx.stroke();
 
-  // Nub
   ctx.beginPath();
   ctx.arc(cx, rotY, r, 0, Math.PI*2);
   ctx.fill();
   ctx.stroke();
 
-  // Arrow hint
   try {
     ctx.save();
     ctx.lineWidth = Math.max(lw * 0.9, 0.8 * px);
@@ -682,14 +676,15 @@ export function render(state, camera, ctx, canvasLike, opts = {}) {
     maxx: view.maxx + qPad,
     maxy: view.maxy + qPad
   };
-  let candidateSet = (baking || transforming) ? null : query(grid, qView);
+  const indexBusy = !!state._indexBusy;
+  let candidateSet = (baking || transforming || indexBusy) ? null : query(grid, qView);
   if (baking || transforming || !candidateSet || candidateSet.size === 0) {
     candidateSet = new Set(state.strokes);
   }
 
   if (!baking) {
     ctx.save();
-    const padClip = 2 / Math.max(1e-8, camera.scale);
+    const padClip = Math.max(2, (ctx.lineWidth || 1) * 2) / Math.max(1e-8, camera.scale);
     ctx.beginPath();
     ctx.rect(view.minx - padClip, view.miny - padClip, (view.maxx - view.minx) + padClip * 2, (view.maxy - view.miny) + padClip * 2);
     ctx.clip();
@@ -731,7 +726,7 @@ export function render(state, camera, ctx, canvasLike, opts = {}) {
       state._transformActive ||
       state._drawingActive  ||
       state._erasingActive  ||
-      state._navActive      // <- freeze animations while navigating
+      state._navActive    
     );
     const axf = interacting ? null : animXfFromLayers(s, state, tNow);
     let animApplied = false;
@@ -777,23 +772,16 @@ export function render(state, camera, ctx, canvasLike, opts = {}) {
         } else {
           const viewInStrokeSpace = unbaked ? invXformBBox(view, bake.s, bake.tx, bake.ty) : view;
           let vr = computeVisibleRange(s, viewInStrokeSpace, Math.max(1, ctx.lineWidth) * 2);
+          ctx.beginPath();
           if (!vr) {
-            // Chunks likely stale after a renorm/transform → fall back safely
-            s._chunks = null;                 // drop stale chunk index
-            // draw full range (cheap at high zoom; you’re drawing only what’s on screen anyway)
-            ctx.beginPath();
+            s._chunks = null;
             ctx.moveTo(pts[0], pts[1]);
             drawPolylineFastWorldTA(ctx, pts, n, camera, 0, (n / STRIDE) - 1, fast, tolLive);
           } else {
-            let off = vr.i0 * STRIDE;
-            ctx.beginPath();
+            const off = vr.i0 * STRIDE;
             ctx.moveTo(pts[off], pts[off + 1]);
             drawPolylineFastWorldTA(ctx, pts, n, camera, vr.i0, vr.i1, fast, tolLive);
           }
-          let off = vr.i0 * STRIDE;
-          ctx.beginPath();
-          ctx.moveTo(pts[off], pts[off + 1]);
-          drawPolylineFastWorldTA(ctx, pts, n, camera, vr.i0, vr.i1, fast, tolLive);
         }
 
         if (s.fill && s.mode !== 'erase') {

@@ -5,371 +5,339 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Deep Canvas</title>
 <style>
-  :root {
+  :root{
     color-scheme: dark light;
-
-    /* Canvas UI theme tokens used by renderer.js */
-    --sel-stroke:        #8a93a3;
-    --sel-fill:          rgba(138,147,163,0.10);
-
-    --handle-stroke:     #b8c1ce;
-    --handle-fill:       rgba(16,18,22,0.85);
-    --handle-fill-active:#3a7afe;
-
-    --rotate-arrow:      #eef1f5;
-
-    --label-bg:          rgba(16,18,22,0.85);
-    --label-stroke:      rgba(184,193,206,0.85);
-    --label-text:        #eef1f5;
-
-    --marquee-stroke:    #9fb3c8;
-    --marquee-fill:      rgba(159,179,200,0.18);
-    --ui-color: #88ccff;
+    --sel-stroke:#8a93a3; --sel-fill:rgba(138,147,163,.10);
+    --handle-stroke:#b8c1ce; --handle-fill:rgba(16,18,22,.85);
+    --handle-fill-active:#3a7afe; --rotate-arrow:#eef1f5;
+    --label-bg:rgba(16,18,22,.85); --label-stroke:rgba(184,193,206,.85);
+    --label-text:#eef1f5; --marquee-stroke:#9fb3c8; --marquee-fill:rgba(159,179,200,.18);
+    --ui-color:#88ccff;
   }
 
- .paint-ball {
-   width: 18px;
-   height: 18px;
-   border-radius: 50%;
-   border: 1px solid var(--border);
-   background:
-     radial-gradient(120% 120% at 30% 28%, rgba(255,255,255,0.25) 0 20%, transparent 40%)
-     radial-gradient(90% 90% at 70% 75%,
-       color-mix(in oklab, var(--ui-color) 78%, black 18%) 0%,
-       color-mix(in oklab, var(--ui-color) 100%, black 26%) 65%,
-       color-mix(in oklab, var(--ui-color) 100%, black 34%) 100%);
-   box-shadow:
-     inset 0 0 0 1px color-mix(in oklab, var(--ui-color) 60%, black 35%),
-     inset 0 -2px 4px rgba(0,0,0,.18);
- }
- .tool.active .paint-ball {
-   outline: 2px solid var(--accent);
-   outline-offset: 2px;
- }
-
-  html, body { height:100%; margin:0; }
-  body {
-    --bg:#0f1115; --glass:#161a20cc; --panel:#161a20; --panel-2:#1b2028;
+  html,body{height:100%;margin:0}
+  body{
+    --bg:#0f1115; --glass:#151a21cc; --panel:#161a20; --panel-2:#1b2028;
     --border:#2a313c; --text:#e7ebf3; --muted:#9aa5b1; --accent:#6cc3ff;
-    font:13px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; background:var(--bg); color:var(--text);
+    font:13px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+    background:var(--bg); color:var(--text);
   }
-  @media (prefers-color-scheme: light) {
-    body {
-      --bg:#f7f8fb; --glass:#ffffffcc; --panel:#fff; --panel-2:#f4f6f8; --border:#dfe3e8;
-      --text:#121619; --muted:#5b6b79; --accent:#007aff;
-
-      --sel-stroke:        #7b8796;
-      --sel-fill:          rgba(123,135,150,0.10);
-      --handle-stroke:     #9aa9ba;
-      --handle-fill:       rgba(255,255,255,0.92);
-      --handle-fill-active:#3a7afe;
-      --rotate-arrow:      #1b2430;
-      --label-bg:          rgba(255,255,255,0.92);
-      --label-stroke:      rgba(154,169,186,0.85);
-      --label-text:        #1b2430;
-      --marquee-stroke:    #8aa1b8;
-      --marquee-fill:      rgba(138,161,184,0.16);
+  @media (prefers-color-scheme:light){
+    body{
+      --bg:#f7f8fb; --glass:#ffffffcc; --panel:#fff; --panel-2:#f4f6f8;
+      --border:#dfe3e8; --text:#121619; --muted:#5b6b79; --accent:#007aff;
+      --sel-stroke:#7b8796; --sel-fill:rgba(123,135,150,.10);
+      --handle-stroke:#9aa9ba; --handle-fill:rgba(255,255,255,.92);
+      --rotate-arrow:#1b2430; --label-bg:rgba(255,255,255,.92);
+      --label-stroke:rgba(154,169,186,.85); --label-text:#1b2430;
+      --marquee-stroke:#8aa1b8; --marquee-fill:rgba(138,161,184,.16);
     }
   }
 
-  /* ===== Canvas area ===== */
-  #canvasContainer { position:relative; width:100vw; height:100vh; }
-  #c, #navOverlay { display:block; width:100vw; height:100vh; }
-  #c { cursor: crosshair; }
-  #c.panning, #c.dragging { cursor: grab; }
-  #navOverlay { position:absolute; left:0; top:0; pointer-events:none; display:none; will-change:transform; }
+  #canvasContainer{position:relative;width:100vw;height:100vh}
+  #c,#navOverlay{display:block;width:100vw;height:100vh}
+  #c{cursor:crosshair} #c.panning,#c.dragging{cursor:grab}
+  #navOverlay{position:absolute;left:0;top:0;pointer-events:none;display:none;will-change:transform}
 
-  .chrome { position:fixed; inset:0; pointer-events:none; }
-  .dock, #toolProps, #ctxMenu, #poseHud { pointer-events:auto; }
+  .chrome{position:fixed;inset:0;pointer-events:none}
+  .dock,#colorPanel,#ctxMenu,#poseHud,.opacity-pop,.opacity-badge{pointer-events:auto}
 
-  .dock {
-    position:fixed; left:50%; bottom:24px; transform:translateX(-50%);
-    display:flex; gap:8px; background:var(--panel); border:1px solid var(--border);
-    border-radius:12px; padding:10px; box-shadow:0 6px 24px rgba(0,0,0,.2); z-index:5;
-  }
-  .tool {
-    width:38px; height:38px; display:grid; place-items:center; border-radius:9px;
-    border:1px solid transparent; background:transparent; color:var(--text); cursor:pointer;
-  }
-  .tool:hover { background:var(--panel-2); }
-  .tool.active { outline:2px solid var(--accent); }
-  .dock .sep { width:1px; height:24px; background:var(--border); margin:0 2px; }
+ .dock{
+  --dock-scale: 1;
+  position:fixed; left:50%; bottom:calc(24px + env(safe-area-inset-bottom, 0px));
+  transform: translate(-50%, 0) scale(var(--dock-scale));
+  transform-origin: center bottom;
+  display:inline-flex; gap:10px; align-items:center; flex-wrap: nowrap; white-space: nowrap;
+  inline-size: max-content; width: max-content;
 
-  #toolProps {
-    position:fixed; left:0; top:0; transform:translate(-50%, -108%);
-    display:none;
-    background:var(--glass); border:1px solid var(--border); border-radius:12px;
-    padding:10px; box-shadow:0 12px 40px rgba(0,0,0,.35); backdrop-filter: blur(10px);
-    z-index:6; min-width: 260px; opacity:0; transition:opacity .12s ease, transform .12s ease;
-  }
-  #toolProps.open { display:block; opacity:1; transform:translate(-50%, -100%); }
-  #toolProps::after {
-    content:''; position:absolute; left:50%; bottom:-8px; transform:translateX(-50%);
-    border-left:8px solid transparent; border-right:8px solid transparent;
-    border-top:8px solid var(--glass); filter:drop-shadow(0 -1px 0 var(--border));
-  }
-  .prop-col { display:flex; flex-direction:column; gap:10px; }
-  .prop-row { display:flex; align-items:center; justify-content:space-between; gap:10px; }
-  .prop-row .label { color:var(--muted); white-space:nowrap; }
-  .stack { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  padding:10px 12px;
+  border-radius:16px;
+  background:var(--glass);
+  border:1px solid var(--border);
+  box-shadow:0 18px 44px rgba(0,0,0,.35);
+  backdrop-filter:saturate(120%) blur(12px);
+  z-index:9;
+ }
 
-  select, input[type="color"], input[type="range"], input[type="text"], .btn {
-    background:var(--panel-2); color:var(--text); border:1px solid var(--border);
-    border-radius:8px; font:inherit;
-  }
-  select, .btn { padding:6px 10px; }
-  input[type="color"] { width:40px; height:32px; padding:0; border-radius:6px; }
-  input[type="range"] { width:140px; padding:0; }
-  .badge {
-    font:11px/1.2 system-ui; color:var(--muted); padding:4px 6px;
-    border:1px solid var(--border); border-radius:6px; background:var(--panel);
-    min-width:44px; text-align:center;
+ .dock::before{
+  content:"";
+  position:absolute; inset:0;
+  border-radius:inherit;
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--border) 55%, transparent);
+  pointer-events:none;
+ }
+  .dock-group{display:inline-flex;gap:10px;align-items:center;flex-wrap:nowrap}
+  .dock > *, .dock-group > *, .chip-row, #sizeRow, .sep, .tool, select {
+    flex: 0 0 auto;                  
+    white-space: nowrap;
   }
 
-  /* ---- Swatches ---- */
-  .swatch-host { display:flex; flex-direction:column; gap:6px; width:100%; }
-  .sw-row { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
-  .sw-title { font-size:11px; color:var(--muted); margin-right:4px; user-select:none; min-width:52px; }
-  .sw-grid { display:grid; grid-auto-flow:column; grid-auto-columns:22px; gap:6px; align-items:center; }
-  .sw {
-    width:22px; height:22px; border-radius:6px; border:1px solid var(--border);
-    cursor:pointer; position:relative;
+  .dock select { max-width: none; }
+  .dock .tool,
+  .dock .sep,
+  .dock .chip-row,
+  .dock #sizeRow{ flex:0 0 auto; }  
+  .dock .sep{
+    width:1px;height:24px;margin:0 4px;
+    background: color-mix(in oklab, var(--border) 80%, transparent);
   }
-  .sw:focus { outline:2px solid var(--accent); outline-offset:2px; }
-  .sw.current::after {
-    content:''; position:absolute; inset:6px; border-radius:4px; border:2px solid rgba(0,0,0,.35);
+
+  .dock .tool:hover{ background: color-mix(in oklab, var(--panel-2) 85%, transparent); }
+  .tool{
+    width:38px;height:38px;display:grid;place-items:center;border-radius:9px;border:1px solid transparent;
+    background:transparent;color:var(--text);cursor:pointer;transition:background .15s ease,outline-color .15s ease
   }
-  .btn.eyedrop { padding:4px 8px; }
+  .tool:hover{background:var(--panel-2)} .tool.active{outline:2px solid var(--accent);outline-offset:2px}
 
-  #ctxMenu {
-    display:none; position:absolute; background:var(--panel); border:1px solid var(--border);
-    border-radius:10px; padding:6px 0; z-index:1000; min-width: 200px; box-shadow: 0 10px 28px rgba(0,0,0,.35);
+  .tool.tool-chip{position:relative;width:auto;padding:0 6px}
+  .tool.tool-chip .chip{
+    position:relative;width:28px;height:28px;border-radius:8px;overflow:hidden;
+    border:1px solid var(--border);background:var(--panel-2);box-shadow:0 1px 0 rgba(0,0,0,.15) inset
   }
-  #ctxMenu .item { padding:10px 14px; cursor:pointer; display:flex; align-items:center; gap:10px; white-space:nowrap; }
-  #ctxMenu .item:hover { background:var(--panel-2); }
-  #ctxMenu .sep { height:1px; margin:6px 0; background:var(--border); }
-
-  /* ---- HUD (Anim + Style only; audio controls removed) ---- */
-  #poseHud {
-    position: fixed;
-    display: none;
-    z-index: 7;
-    left: -9999px; top: -9999px;
-    transform: translate(-50%, 8px);
-    background: var(--glass);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 8px 10px;
-    box-shadow: 0 10px 28px rgba(0,0,0,.35);
-    backdrop-filter: blur(10px);
-  }
-  .hud-row { display:flex; align-items:center; gap:8px; }
-  #poseHud .pose-row { display:flex; gap:8px; align-items:center; }
-  #poseHud .mini { font-size:11px; color:var(--muted); }
-  #poseHud .hud-input { background: var(--panel-2); color: var(--text); border:1px solid var(--border); border-radius:6px; padding:3px 6px; }
-  #poseHud .pose-row label { display:inline-flex; align-items:center; gap:6px; }
-  #poseHud .pose-row .stack { display:inline-flex; gap:6px; }
-
-  /* ===== Redesigned Gallery ===== */
-
-  #galleryView {
-    position: absolute; inset: 0;
-    overflow: auto;
+  .tool.tool-chip .chip::before{
+    content:"";position:absolute;inset:0;
     background:
-      radial-gradient(1200px 800px at 20% -10%, rgba(108,195,255,.12), transparent 60%),
-      radial-gradient(900px 600px at 120% 10%, rgba(92,124,250,.14), transparent 55%),
+      linear-gradient(45deg,#0000 25%,#00000033 25% 50%,#0000 50% 75%,#00000033 75%) 0 0/10px 10px,
+      linear-gradient(45deg,#00000033 25%,#0000 25% 50%,#00000033 50% 75%,#0000 75%) 5px 5px/10px 10px;
+    opacity:.35
+  }
+  .tool.tool-chip .chip .dot{
+    position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+    width:14px;height:14px;border-radius:50%;background:var(--ui-color);
+    box-shadow:0 0 0 1px rgba(0,0,0,.35),inset 0 -2px 3px rgba(0,0,0,.18)
+  }
+
+  .chip-row{display:flex;gap:6px;align-items:center}
+  .size-chip{
+    width:28px;height:28px;display:grid;place-items:center;border-radius:8px;border:1px solid var(--border);
+    background:var(--panel-2);cursor:pointer;position:relative;transition:transform .12s ease,box-shadow .12s ease
+  }
+  .size-chip:hover{transform:translateY(-1px)}
+  .size-chip .dot{width:var(--d,8px);height:var(--d,8px);border-radius:50%;background:var(--ui-color);
+    box-shadow:0 0 0 1px rgba(0,0,0,.25),inset 0 -2px 3px rgba(0,0,0,.18)}
+  .size-chip.current{outline:2px solid var(--accent);outline-offset:2px;box-shadow:0 8px 18px rgba(0,0,0,.22)}
+
+  #colorPanel{
+    position:fixed;left:0;top:0;transform:translate(-50%,-108%);display:none;background:var(--glass);
+    border:1px solid var(--border);border-radius:12px;padding:12px;box-shadow:0 16px 44px rgba(0,0,0,.38);
+    backdrop-filter:saturate(120%) blur(12px);z-index:6;min-width:280px;opacity:0;transition:opacity .12s,transform .12s
+  }
+  #colorPanel.open{display:block;opacity:1;transform:translate(-50%,-100%)}
+  #colorPanel::after{
+    content:"";position:absolute;left:50%;bottom:-8px;transform:translateX(-50%);
+    border-left:8px solid transparent;border-right:8px solid transparent;border-top:8px solid var(--glass);
+    filter:drop-shadow(0 -1px 0 var(--border))
+  }
+  .prop-col{display:flex;flex-direction:column;gap:10px}
+  .prop-row{display:flex;align-items:center;justify-content:space-between;gap:10px}
+  .label{color:var(--muted)} .stack{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  input[type="color"],.btn,select{background:var(--panel-2);color:var(--text);border:1px solid var(--border);border-radius:8px}
+  input[type="color"]{width:40px;height:32px;padding:0;border-radius:6px} .btn{padding:6px 10px}.btn.eyedrop{padding:4px 8px}
+  .swatch-host{display:flex;flex-direction:column;gap:6px;width:100%}
+  .sw-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .sw-title{font-size:11px;color:var(--muted);min-width:52px}
+  .sw-grid{display:grid;grid-auto-flow:column;grid-auto-columns:22px;gap:6px;align-items:center}
+  .sw{width:22px;height:22px;border-radius:6px;border:1px solid var(--border);cursor:pointer;position:relative}
+  .sw:focus{outline:2px solid var(--accent);outline-offset:2px}
+  .sw.current::after{content:"";position:absolute;inset:6px;border-radius:4px;border:2px solid rgba(0,0,0,.35)}
+
+  .opacity-pop{
+    position:fixed;display:none;z-index:21;left:-9999px;top:-9999px;  
+    transform:translate(-50%,calc(-100% - 22px));    
+    padding:10px;background:var(--glass);border:1px solid var(--border);border-radius:12px;
+    box-shadow:0 16px 36px rgba(0,0,0,.35);backdrop-filter:saturate(120%) blur(10px)
+  }
+  .opacity-pop.open{display:block}
+  .opacity-pop::after{
+    content:"";position:absolute;left:50%;bottom:-21px;transform:translateX(-50%); 
+    border-left:9px solid transparent;border-right:9px solid transparent;border-top:9px solid var(--glass);
+    filter:drop-shadow(0 -1px 0 var(--border))
+  }
+
+  .alpha-slider{position:relative;width:36px;height:150px}
+  .alpha-rail{
+    position:absolute;top:6px;bottom:6px;left:12px;right:12px;border-radius:10px;border:1px solid var(--border);overflow:hidden;
+    background:
+      linear-gradient(45deg,#0000 25%,#00000033 25% 50%,#0000 50% 75%,#00000033 75%) 0 0/10px 10px,
+      linear-gradient(45deg,#00000033 25%,#0000 25% 50%,#00000033 50% 75%,#0000 75%) 5px 5px/10px 10px;
+    box-shadow:inset 0 0 0 1px rgba(0,0,0,.06),inset 0 6px 14px rgba(0,0,0,.12)
+  }
+  .alpha-fill{
+    position:absolute;left:12px;right:12px;bottom:6px;height:0;
+    background:linear-gradient(180deg, color-mix(in oklab,var(--ui-color) 92%, black 4%), color-mix(in oklab,var(--ui-color) 100%, black 10%));
+    border-bottom-left-radius:10px;border-bottom-right-radius:10px
+  }
+  .alpha-ticks{
+    position:absolute;top:10px;bottom:10px;right:7px;width:4px;pointer-events:none;
+    background:linear-gradient(to bottom,#0000 0 80%, rgba(255,255,255,.20) 80% 82%, #0000 82% 100%) repeat-y;
+    background-size:4px 20%;
+    filter:drop-shadow(0 0 1px rgba(0,0,0,.4))
+  }
+  .alpha-thumb{
+    position:absolute;width:20px;height:20px;border-radius:50%;
+    background:radial-gradient(60% 60% at 40% 35%, rgba(255,255,255,.35), rgba(255,255,255,0) 60%), var(--ui-color);
+    border:1px solid rgba(0,0,0,.35);box-shadow:0 4px 12px rgba(0,0,0,.28), inset 0 -2px 3px rgba(0,0,0,.20);
+    left:50%; margin-left:-10px; top:0; 
+    outline:2px solid color-mix(in oklab,var(--ui-color) 45%, transparent)
+  }
+
+  .opacity-badge{
+    position:fixed;display:none;z-index:22;left:-9999px;top:-9999px;transform:translate(-50%,calc(-100% - 10px));
+    padding:6px 10px;font:800 11px/1 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;color:var(--text);
+    background:var(--glass);border:1px solid var(--border);border-radius:10px;
+    box-shadow:0 10px 26px rgba(0,0,0,.32);backdrop-filter:saturate(120%) blur(10px);pointer-events:none
+  }
+
+  #ctxMenu{display:none;position:absolute;background:var(--panel);border:1px solid var(--border);
+    border-radius:10px;padding:6px 0;z-index:1000;min-width:200px;box-shadow:0 10px 28px rgba(0,0,0,.35)}
+  #ctxMenu .item{padding:10px 14px;cursor:pointer;display:flex;align-items:center;gap:10px;white-space:nowrap}
+  #ctxMenu .item:hover{background:var(--panel-2)} #ctxMenu .sep{height:1px;margin:6px 0;background:var(--border)}
+
+  #poseHud{
+    position:fixed;display:none;z-index:7;left:-9999px;top:-9999px;transform:translate(-50%,8px);
+    background:var(--glass);border:1px solid var(--border);border-radius:10px;padding:8px 10px;
+    box-shadow:0 10px 28px rgba(0,0,0,.35);backdrop-filter:blur(10px)
+  }
+  #poseHud .pose-row{display:flex;gap:8px;align-items:center}
+  #poseHud .mini{font-size:11px;color:var(--muted)}
+  #poseHud .hud-input{background:var(--panel-2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:3px 6px}
+
+  #galleryView{
+    position:absolute;inset:0;overflow:auto;
+    background:
+      radial-gradient(1600px 1000px at -20% -10%, rgba(108,195,255,.10), transparent 60%),
+      radial-gradient(1200px 700px at 120% 10%, rgba(92,124,250,.12), transparent 55%),
+      linear-gradient(180deg, rgba(255,255,255,.02), rgba(0,0,0,.06)),
       var(--bg);
-    display:none;
+    display:none
   }
+  .g-shell{max-width:1320px;margin:24px auto 90px;padding:0 24px}
+  .g-root{isolation:isolate}
+  .g-grid{
+    display:grid;grid-template-columns:repeat(auto-fill,minmax(var(--g-col-min,300px),1fr));
+    gap:20px;align-content:start
+  }
+  @media (max-width:560px){ .g-grid{grid-template-columns:1fr 1fr;gap:12px;--g-col-min:170px} }
 
-  .g-shell {
-    max-width: 1200px;
-    margin: 40px auto 80px;
-    padding: 0 20px;
-  }
+  .g-item{min-width:0}
 
-  .g-header {
-    display: grid;
-    gap: 8px;
-    margin-bottom: 16px;
+  .g-card{
+    position:relative;display:grid;grid-template-rows:auto min-content;border-radius:18px;overflow:clip;
+    background:linear-gradient(180deg,color-mix(in oklab,var(--panel) 96%, transparent), color-mix(in oklab,var(--panel) 99%, transparent));
+    border:1px solid color-mix(in oklab,var(--border) 82%, transparent);
+    box-shadow:0 18px 44px rgba(0,0,0,.30), 0 0 0 1px color-mix(in oklab,var(--accent) 0%, transparent) inset;
+    transition:transform .18s ease,border-color .18s ease,box-shadow .18s ease,outline-color .18s ease
   }
-  .g-title {
-    display: inline-flex; align-items: center; gap: 10px;
-    color: var(--text);
+  .g-card:hover{
+    transform:translateY(-4px);
+    border-color:color-mix(in oklab,var(--border) 50%, var(--accent) 28%);
+    box-shadow:0 28px 64px rgba(0,0,0,.36), 0 0 0 1px color-mix(in oklab,var(--accent) 12%, transparent) inset
   }
-  .g-title h1 { font: 700 20px/1.25 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 0; }
-  .g-title svg { opacity: .9; }
+  .g-card:focus{outline:2px solid var(--accent);outline-offset:2px}
 
-  .g-sub { color: var(--muted); font-size: 12px; }
-  .g-sub kbd {
-    font: 11px/1.1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    padding: 2px 6px; border: 1px solid var(--border); border-radius: 6px;
-    background: var(--panel); color: var(--text);
+  button.g-card{
+    appearance:none; -webkit-appearance:none;
+    padding:0; border:0; background:none; color:inherit; font:inherit; text-align:inherit;
+    display:grid; cursor:pointer;
   }
+  button.g-card:focus{ outline:2px solid var(--accent); outline-offset:2px }
 
-  .g-root { isolation: isolate; }
-  .g-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(var(--g-col-min, 260px), 1fr));
-    gap: 16px;
-    align-content: start;
-  }
-  @media (min-width: 1400px) { .g-grid { gap: 18px; } }
-  @media (max-width: 520px)  { .g-grid { grid-template-columns: 1fr 1fr; gap: 12px; --g-col-min: 160px; } }
+  .g-thumb{position:relative;aspect-ratio:var(--thumb-ar, 16/10); background:var(--panel-2);overflow:hidden;}
+  .g-thumb img{width:100%;height:100%;object-fit:cover;transform:scale(1.001)}
+  .g-card:hover .g-thumb img{transform:scale(1.02);transition:transform .35s ease}
+  .g-thumb::after{content:"";position:absolute;inset:0;background:linear-gradient(to top,rgba(0,0,0,.28),rgba(0,0,0,0) 60%);pointer-events:none}
 
-  .g-item { min-width: 0; }
-
-  .g-card {
-    position: relative;
-    display: grid;
-    grid-template-rows: auto min-content;
-    border-radius: 14px;
-    background: color-mix(in hsl, var(--panel) 84%, black 0%);
-    border: 1px solid color-mix(in hsl, var(--border) 80%, transparent);
-    overflow: clip;
-    box-shadow: 0 10px 22px rgba(0,0,0,.18);
-    transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease;
-    will-change: transform;
-  }
-  .g-card:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 18px 36px rgba(0,0,0,.28);
-    border-color: color-mix(in hsl, var(--border) 50%, var(--accent) 35%);
-  }
-
-  .g-thumb {
-    position: relative;
-    aspect-ratio: 16/9;
+  .g-thumb.no-thumb{
     background:
       linear-gradient(180deg, rgba(255,255,255,.02), rgba(0,0,0,.06)),
-      var(--panel-2);
+      repeating-linear-gradient(45deg,#222 0 10px,#2b2b2b 10px 20px)
   }
-  .g-thumb img { width:100%; height:100%; display:block; object-fit:cover; transform:translateZ(0); }
-  .g-thumb::after {
-    content: ""; position: absolute; inset: 0;
-    background: linear-gradient(to top, rgba(0,0,0,.24), rgba(0,0,0,0) 60%);
-    pointer-events: none;
+  .g-thumb.no-thumb::before{
+    content:""; 
   }
 
-  .g-thumb.no-thumb {
-    background:
-      repeating-linear-gradient(45deg, #222 0 10px, #2b2b2b 10px 20px),
-      var(--panel-2);
+  .g-actions{
+    position:absolute;top:10px;right:10px;display:inline-flex;gap:8px;opacity:0;transform:translateY(-4px);
+    transition:opacity .16s ease,transform .16s ease;z-index:2
   }
-  .g-thumb.no-thumb::before {
-    content: "No preview";
-    position: absolute; inset: 0; display: grid; place-items: center;
-    color: #9aa5b1; font-size: 12px; letter-spacing: .02em;
+  .g-card:hover .g-actions{opacity:1;transform:translateY(0)}
+
+  .g-act{
+    display:inline-grid;place-items:center;width:30px;height:30px;border-radius:10px;
+    border:1px solid color-mix(in oklab,var(--border) 82%, transparent);background:color-mix(in oklab,var(--panel) 96%, black 0%);
+    color:var(--text);cursor:pointer;transition:transform .12s,background .12s,border-color .12s,color .12s
+  }
+  .g-act:hover{transform:translateY(-1px);background:var(--panel-2)}
+  .g-act:active{transform:translateY(0)}
+  .g-act.g-del{color:#ff6b6b;border-color:color-mix(in oklab,#ff6b6b 30%, var(--border))}
+  .g-act.g-del:hover{background:color-mix(in oklab,#ff6b6b 12%, var(--panel))}
+
+  .g-meta{
+    display:flex;align-items:center;min-height:54px;padding:12px 14px;
+    background:linear-gradient(180deg,color-mix(in oklab,var(--panel) 98%, transparent), color-mix(in oklab,var(--panel) 100%, transparent));
+    border-top:1px solid color-mix(in oklab,var(--border) 82%, transparent)
+  }
+  .g-name{
+    font:800 13px/1.3 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;color:var(--text);
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap
+  }
+  .g-name[contenteditable="true"]{
+    outline:2px solid color-mix(in oklab,var(--accent) 55%, transparent);border-radius:6px;padding:2px 4px;
+    background:color-mix(in oklab,var(--panel-2) 92%, transparent)
   }
 
-  .g-actions {
-    position: absolute; top: 8px; right: 8px; display: inline-flex; gap: 6px;
-    opacity: 0; transform: translateY(-4px);
-    transition: opacity .18s ease, transform .18s ease;
-    z-index: 2;
+  .g-card.g-new{ border-style:solid }
+  .g-card.g-new .g-meta{ display:none }
+  .g-card.g-new .g-thumb.plus span{
+    font:900 56px/1 system-ui; opacity:.95; color:var(--accent);
+    filter:drop-shadow(0 10px 32px color-mix(in oklab,var(--accent) 35%, transparent));
+    transition:transform .15s ease;
   }
-  .g-card:hover .g-actions { opacity: 1; transform: translateY(0); }
+  button.g-card.g-new:focus .g-thumb.plus span{ transform:scale(1.04) }
+.g-fab{
+  position:fixed; left:50%; bottom:24px; transform:translateX(-50%);
+  display:none;
+  z-index:20;
+  width:64px; height:64px; border:1px solid color-mix(in oklab,var(--border) 70%, transparent);
+  border-radius:18px; background:linear-gradient(180deg,
+    color-mix(in oklab,var(--panel) 96%, transparent),
+    color-mix(in oklab,var(--panel) 100%, transparent));
+  box-shadow:0 14px 36px rgba(0,0,0,.35);
+  color:var(--accent);
+  place-items:center;
+  cursor:pointer;
+  transition:transform .15s ease, box-shadow .15s ease, border-color .15s ease, background .15s ease;
+}
+.g-fab span{
+  font:900 34px/1 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+  filter:drop-shadow(0 10px 24px color-mix(in oklab,var(--accent) 35%, transparent));
+}
+.g-fab:hover{ transform:translateX(-50%) translateY(-2px); box-shadow:0 24px 60px rgba(0,0,0,.45); }
+.g-fab:active{ transform:translateX(-50%) translateY(0); }
+.g-fab:focus{ outline:2px solid var(--accent); outline-offset:3px; }
 
-  .g-act {
-    display: inline-grid; place-items: center;
-    width: 28px; height: 28px;
-    border-radius: 8px;
-    border: 1px solid color-mix(in hsl, var(--border) 82%, transparent);
-    background: color-mix(in hsl, var(--panel) 92%, black 0%);
-    color: var(--text);
-    cursor: pointer;
-    transition: transform .12s ease, background .12s ease, filter .12s ease, border-color .12s ease;
-  }
-  .g-act:hover { transform: translateY(-1px); background: var(--panel-2); }
-  .g-act:active { transform: translateY(0); }
-  .g-act.g-del { color: #ff6b6b; border-color: color-mix(in hsl, #ff6b6b 40%, var(--border)); }
-  .g-act.g-del:hover { background: color-mix(in hsl, #ff6b6b 12%, var(--panel)); }
+.in-gallery .g-fab{ display:grid; }
 
-  .g-meta {
-    display: flex; align-items: center; min-height: 46px;
-    padding: 10px 12px;
-    background: linear-gradient(180deg, color-mix(in hsl, var(--panel) 92%, transparent) 0%, color-mix(in hsl, var(--panel) 96%, black 0%) 100%);
-    border-top: 1px solid color-mix(in hsl, var(--border) 82%, transparent);
-  }
-  .g-name {
-    font: 600 13px/1.3 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-    color: var(--text);
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  }
-  .g-name[contenteditable="true"] {
-    outline: 2px solid color-mix(in hsl, var(--accent) 55%, transparent);
-    border-radius: 6px; padding: 2px 4px;
-    background: color-mix(in hsl, var(--panel-2) 92%, transparent);
-  }
-
-  .g-card.g-new {
-    grid-template-rows: 1fr auto;
-    place-items: stretch;
-    border-style: dashed;
-    border-color: color-mix(in hsl, var(--border) 70%, transparent);
-    background:
-      linear-gradient(180deg, rgba(255,255,255,.02), rgba(0,0,0,.06)),
-      var(--panel);
-    text-align: center;
-    cursor: pointer;
-  }
-  .g-card.g-new .g-thumb.plus {
-    display: grid; place-items: center; aspect-ratio: 16/9;
-    background:
-      repeating-linear-gradient(45deg, color-mix(in hsl, var(--panel-2) 70%, transparent) 0 12px,
-                                     color-mix(in hsl, var(--panel-2) 88%, transparent) 12px 24px),
-      var(--panel-2);
-  }
-  .g-card.g-new .g-thumb.plus span {
-    font: 600 40px/1 system-ui; opacity: .85;
-    color: var(--accent);
-    filter: drop-shadow(0 6px 22px color-mix(in hsl, var(--accent) 35%, transparent));
-  }
-  .g-card.g-new .g-meta { justify-content: center; }
-  .g-card.g-new .g-name { color: var(--muted); }
-
-  .g-card:focus {
-    outline: 2px solid var(--accent);
-    outline-offset: 2px;
-  }
-  .g-card::before {
-    content: ""; position: absolute; inset: -1px; border-radius: 16px;
-    background: linear-gradient(135deg, color-mix(in hsl, var(--accent) 42%, transparent), transparent 40%);
-    -webkit-mask: 
-      linear-gradient(#000 0 0) content-box, 
-      linear-gradient(#000 0 0);
-    mask: 
-      linear-gradient(#000 0 0) content-box, 
-      linear-gradient(#000 0 0);
-    -webkit-mask-composite: xor; mask-composite: exclude;
-    padding: 1px; pointer-events: none; opacity: .18;
-    transition: opacity .2s ease;
-  }
-  .g-card:hover::before { opacity: .38; }
+@supports(padding: max(0px)){
+  .g-fab{ bottom: calc(24px + env(safe-area-inset-bottom, 0px)); }
+}
 </style>
 </head>
 <body>
 
-<!-- ===== Gallery View (Landing) ===== -->
 <section id="galleryView" aria-label="Gallery" style="display:none;">
   <div class="g-shell">
-    <header class="g-header">
-      <div class="g-title">
-        <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M4 7h16v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7z" fill="currentColor" opacity=".24"></path>
-          <path d="M4 7l3-4h10l3 4" stroke="currentColor" fill="none"></path>
-        </svg>
-        <h1>My Canvases</h1>
+    <div id="galleryRoot" class="g-root">
+      <div class="g-grid" id="gGrid">
       </div>
-      <div class="g-sub">
-        <span class="g-hint">Double-click a card to open • Press <kbd>F2</kbd> or <kbd>Backspace</kbd> to rename • <kbd>Delete</kbd> to remove</span>
-      </div>
-    </header>
-    <div id="galleryRoot" class="g-root"></div>
+    </div>
   </div>
 </section>
 
-<!-- ===== Canvas Workspace ===== -->
+<button id="newCanvasFAB" class="g-fab" type="button" aria-label="Create new canvas" title="New Canvas">
+  <span>＋</span>
+</button>
+
 <div id="canvasContainer">
   <canvas id="c"></canvas>
   <canvas id="navOverlay"></canvas>
@@ -380,25 +348,14 @@
     <div id="animRow" class="pose-row" style="gap:8px;">
       <label class="mini">Anim</label>
       <select id="animType" class="hud-input">
-        <option value="none">None</option>
-        <option value="spin">Spin</option>
-        <option value="sway">Sway</option>
-        <option value="pulse">Pulse</option>
-        <option value="bounce">Bounce</option>
-        <option value="orbit">Orbit</option>
-        <option value="shake">Shake</option>
-        <option value="pendulum">Pendulum</option>
-        <option value="float">Float</option>
-        <option value="drift">Drift</option>
+        <option value="none">None</option><option value="spin">Spin</option><option value="sway">Sway</option>
+        <option value="pulse">Pulse</option><option value="bounce">Bounce</option><option value="orbit">Orbit</option>
+        <option value="shake">Shake</option><option value="pendulum">Pendulum</option><option value="float">Float</option><option value="drift">Drift</option>
       </select>
       <label id="animSpeedWrap"><span class="mini">Speed</span><input id="animSpeed" class="hud-input" type="number" step="0.1" value="1" style="width:64px;"></label>
       <label id="animAmountWrap" style="display:none;"><span class="mini">Amt</span><input id="animAmount" class="hud-input" type="number" step="0.05" value="0.15" style="width:64px;"></label>
       <label id="animAxisWrap" style="display:none;"><span class="mini">Axis</span>
-        <select id="animAxis" class="hud-input">
-          <option value="xy">XY</option>
-          <option value="x">X</option>
-          <option value="y">Y</option>
-        </select>
+        <select id="animAxis" class="hud-input"><option value="xy">XY</option><option value="x">X</option><option value="y">Y</option></select>
       </label>
       <span id="animRadiusWrap" class="stack" style="display:none;">
         <label><span class="mini">Rx</span><input id="animRadiusX" class="hud-input" type="number" step="1" value="12" style="width:60px;"></label>
@@ -407,19 +364,12 @@
       <label id="animRotWrap" style="display:none;"><span class="mini">RotAmt</span><input id="animRotAmt" class="hud-input" type="number" step="0.01" value="0.02" style="width:64px;"></label>
       <label id="animPosWrap" style="display:none;"><span class="mini">PosAmt</span><input id="animPosAmt" class="hud-input" type="number" step="1" value="2" style="width:64px;"></label>
     </div>
-
-    <div id="styleRow" class="pose-row" style="margin-top:6px; gap:8px;">
+    <div id="styleRow" class="pose-row" style="margin-top:6px;gap:8px;">
       <label class="mini">Style</label>
       <select id="styleType" class="hud-input">
-        <option value="none">None</option>
-        <option value="width">Width Pulse</option>
-        <option value="opacity">Opacity Pulse</option>
-        <option value="glow">Glow Pulse</option>
-        <option value="hue">Hue Shift</option>
-        <option value="dash">Dash Flow</option>
-        <option value="blur">Blur</option>
-        <option value="saturation">Saturation</option>
-        <option value="lightness">Lightness</option>
+        <option value="none">None</option><option value="width">Width Pulse</option><option value="opacity">Opacity Pulse</option>
+        <option value="glow">Glow</option><option value="hue">Hue Shift</option><option value="dash">Dash Flow</option>
+        <option value="blur">Blur</option><option value="saturation">Saturation</option><option value="lightness">Lightness</option>
       </select>
       <label id="styleSpeedWrap"><span class="mini">Speed</span><input id="styleSpeed" class="hud-input" type="number" step="0.1" value="1" style="width:64px;"></label>
       <label id="styleAmountWrap" style="display:none;"><span class="mini">Amt</span><input id="styleAmount" class="hud-input" type="number" step="0.05" value="0.15" style="width:64px;"></label>
@@ -429,23 +379,8 @@
   </div>
 </div>
 
-<!-- Tool properties popover -->
-<div id="toolProps" role="dialog" aria-label="Tool properties">
+<div id="colorPanel" role="dialog" aria-label="Color">
   <div class="prop-col">
-    <div class="prop-row" style="justify-content:flex-end; gap:6px;">
-      <button id="propPin" class="btn" style="padding:4px 8px;">Pin</button>
-    </div>
-
-    <div class="prop-row" data-prop="brush">
-      <div class="label">Brush</div>
-      <select id="brush">
-        <option value="pen">Pen</option>
-        <option value="dashed">Dashed</option>
-        <option value="marker">Marker</option>
-        <option value="glow">Glow</option>
-      </select>
-    </div>
-
     <div class="prop-row" data-prop="color">
       <div class="label">Color</div>
       <div class="stack color-stack">
@@ -453,107 +388,103 @@
         <button class="btn eyedrop" id="eyedropBtn" type="button">Pick</button>
       </div>
     </div>
-    <div class="prop-row" style="justify-content:flex-start;" data-prop="color-swatches">
+    <div class="prop-row" style="justify-content:flex-start" data-prop="color-swatches">
       <div class="swatch-host" id="swatchHost"></div>
-    </div>
-
-    <div class="prop-row" data-prop="size">
-      <div class="label">Size</div>
-      <div class="stack">
-        <input id="size" type="range" min="1" max="48" step="1" value="6" />
-        <span id="sizev" class="badge">6 px</span>
-      </div>
-    </div>
-
-    <div class="prop-row" data-prop="opacity">
-      <div class="label">Opacity</div>
-      <div class="stack">
-        <input id="opacity" type="range" min="5" max="100" step="1" value="100" />
-        <span id="opacityv" class="badge">100%</span>
-      </div>
-    </div>
-
-    <div class="prop-row" data-prop="fill">
-      <div class="label">Fill</div>
-      <label class="stack"><input id="fill" type="checkbox" /> Fill shapes</label>
     </div>
   </div>
 </div>
 
-<!-- Tool dock -->
+<div id="opacityPopover" class="opacity-pop" aria-hidden="true">
+  <div id="opacitySlider" class="alpha-slider" role="slider"
+       aria-valuemin="5" aria-valuemax="100" aria-valuenow="100" tabindex="0">
+    <div class="alpha-rail"></div>
+    <div class="alpha-fill"></div>
+    <div class="alpha-ticks"></div>
+    <div class="alpha-thumb"></div>
+  </div>
+</div>
+<div id="opacityBadge" class="opacity-badge" aria-hidden="true">100%</div>
+
 <div class="dock" id="dock" aria-label="Tools">
-  <button data-tool="select" class="tool" title="Select" aria-label="Select">
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-      <path d="M4 4l7 14 2-6 6-2-15-6z" />
-      <path d="M3 3h4M9 3h4M15 3h3M21 7v4M21 13v4M17 21h-4M11 21H7M3 17v-4M3 11V7" />
-    </svg>
-  </button>
+  <div class="dock-group global">
+    <button id="colorBtn" class="tool tool-chip" aria-label="Color">
+      <span class="chip" aria-hidden="true"><span class="dot"></span></span>
+    </button>
+    <label>
+      <select id="quickBrush" aria-label="Brush">
+        <option value="pen">Pen</option><option value="dashed">Dashed</option>
+        <option value="marker">Marker</option><option value="glow">Glow</option>
+      </select>
+    </label>
+    <div id="sizeRow" class="chip-row sizes" aria-label="Brush sizes"></div>
+  </div>
 
-  <button data-tool="draw" class="tool active" title="Draw" aria-label="Draw">
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
-  </button>
-  <button data-tool="paint" class="tool" title="Paint" aria-label="Paint">
-    <span class="paint-ball" aria-hidden="true"></span>
-  </button>
-  <button data-tool="erase" class="tool" title="Erase" aria-label="Erase">
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="m19 5-7 7-5-5 7-7z" transform="translate(-2,6)"/><path d="M7 21h10"/></svg>
-  </button>
-  <button data-tool="delete" class="tool" title="Delete" aria-label="Delete">
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 6h18"/><path d="M8 6v14a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2V6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
-  </button>
+  <div class="sep" role="separator"></div>
 
-  <div class="sep"></div>
+  <div class="dock-group tools">
+    <button data-tool="select" class="tool" aria-label="Select">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+        <path d="M4 4l7 14 2-6 6-2-15-6z" />
+        <path d="M3 3h4M9 3h4M15 3h3M21 7v4M21 13v4M17 21h-4M11 21H7M3 17v-4M3 11V7" />
+      </svg>
+    </button>
+    <button data-tool="draw" class="tool active" aria-label="Draw">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+    </button>
+    <button data-tool="paint" class="tool" aria-label="Fill">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+        <path d="M19 11c0 3-7 8-7 8s-7-5-7-8a7 7 0 0 1 14 0z"/><path d="M12 3v6"/><path d="M8 7h8"/>
+      </svg>
+    </button>
+    <button data-tool="erase" class="tool" aria-label="Erase">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="m19 5-7 7-5-5 7-7z" transform="translate(-2,6)"/><path d="M7 21h10"/></svg>
+    </button>
+    <button data-tool="delete" class="tool" aria-label="Delete">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+        <path d="M3 6h18"/><path d="M8 6v14a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2V6"/>
+        <path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+      </svg>
+    </button>
+    <button data-tool="pan" class="tool" aria-label="Pan">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+        <path d="M8 11V6a1 1 0 0 1 2 0v5" /><path d="M10 10V5a1 1 0 0 1 2 0v5" />
+        <path d="M12 9V4a1 1 0 0 1 2 0v5" /><path d="M14 10V6a1 1 0 0 1 2 0v4" />
+        <path d="M8 11c-1.5 1.5-1.5 4.5 0 6l2 2h4l2-3-1-3" /><path d="M8 13l-2-1" />
+      </svg>
+    </button>
+    <button data-tool="line" class="tool" aria-label="Line">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 20 20 4"/></svg>
+    </button>
+    <button data-tool="rect" class="tool" aria-label="Rect">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
+    </button>
+    <button data-tool="ellipse" class="tool" aria-label="Ellipse">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"><ellipse cx="12" cy="12" rx="8" ry="6"/></svg>
+    </button>
+  </div>
 
-  <button data-tool="pan" class="tool" title="Pan" aria-label="Pan">
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-      <path d="M8 11V6a1 1 0 0 1 2 0v5" />
-      <path d="M10 10V5a1 1 0 0 1 2 0v5" />
-      <path d="M12 9V4a1 1 0 0 1 2 0v5" />
-      <path d="M14 10V6a1 1 0 0 1 2 0v4" />
-      <path d="M8 11c-1.5 1.5-1.5 4.5 0 6l2 2h4l2-3-1-3" />
-      <path d="M8 13l-2-1" />
-    </svg>
-  </button>
+  <div class="sep" role="separator"></div>
 
-  <button data-tool="line" class="tool" title="Line" aria-label="Line">
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 20 20 4"/></svg>
-  </button>
-  <button data-tool="rect" class="tool" title="Rect" aria-label="Rect">
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
-  </button>
-  <button data-tool="ellipse" class="tool" title="Ellipse" aria-label="Ellipse">
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"><ellipse cx="12" cy="12" rx="8" ry="6"/></svg>
-  </button>
-
-  <div class="sep"></div>
-
-  <button id="undo" class="tool" title="Undo" aria-label="Undo">
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 7v6h6"/><path d="M21 17a8 8 0 0 0-13-5l-5 5"/></svg>
-  </button>
-  <button id="redo" class="tool" title="Redo" aria-label="Redo">
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21 7v6h-6"/><path d="M3 17a8 8 0 0 1 13-5l5 5"/></svg>
-  </button>
-
-  <div class="sep"></div>
-
-  <button id="clear" class="tool" title="Clear" aria-label="Clear">
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-      <path d="M12 2 L12 10" />
-      <path d="M7 15 Q12 12 17 15 L16 20 H8 L7 15 Z" />
-      <path d="M9 15 L9 20" />
-      <path d="M12 15 L12 20" />
-      <path d="M15 15 L15 20" />
-    </svg>
-  </button>
-
-  <button id="backToGallery" class="tool" title="Back to Gallery" aria-label="Back to Gallery">
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-      <path d="M3 12h18M9 6l-6 6 6 6"/>
-    </svg>
-  </button>
+  <div class="dock-group actions">
+    <button id="undo" class="tool" aria-label="Undo">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 7v6h6"/><path d="M21 17a8 8 0 0 0-13-5l-5 5"/></svg>
+    </button>
+    <button id="redo" class="tool" aria-label="Redo">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21 7v6h-6"/><path d="M3 17a8 8 0 0 1 13-5l5 5"/></svg>
+    </button>
+    <button id="clear" class="tool" aria-label="Clear">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+        <path d="M12 2 L12 10" /><path d="M7 15 Q12 12 17 15 L16 20 H8 L7 15 Z" />
+        <path d="M9 15 L9 20" /><path d="M12 15 L12 20" /><path d="M15 15 L15 20" />
+      </svg>
+    </button>
+    <button id="backToGallery" class="tool" aria-label="Back to Gallery">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 12h18M9 6l-6 6 6 6"/></svg>
+    </button>
+  </div>
 </div>
 
-<!-- Context menu -->
+
 <div id="ctxMenu" role="menu" aria-hidden="true">
   <div id="ctxResetView" class="item" role="menuitem">↺ Reset View</div>
   <div id="ctxDeleteSel" class="item" role="menuitem">Delete Selected</div>

@@ -7,6 +7,15 @@ function newId() {
   return (crypto?.randomUUID?.() || ('d-' + Math.random().toString(36).slice(2, 10)));
 }
 
+export function loadThumb(id) {
+  try {
+    const d = getDoc(id);
+    return d?.thumb || null;
+  } catch {
+    return null;
+  }
+}
+
 export function listDocs() {
   try {
     const arr = JSON.parse(localStorage.getItem(LS_LIST_KEY) || '[]');
