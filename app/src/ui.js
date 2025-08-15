@@ -158,7 +158,7 @@ function keepEnum(v, allowed, fallback) { return allowed.includes(v) ? v : fallb
 function cloneAnimLayer(L){
   if (!L) return null;
   return {
-    type: keepEnum(L.type, ['spin','sway','pulse','bounce','orbit','shake'], 'spin'),
+    type: keepEnum(L.type, ['spin','sway','pulse','bounce','orbit','shake','pendulum','float','drift'], 'spin'),
     enabled: !!L.enabled,
     speed: clampNum(L.speed, 1),
     phase: clampNum(L.phase, 0),
@@ -174,13 +174,16 @@ function cloneAnimLayer(L){
 function cloneStyleLayer(L){
   if (!L) return null;
   return {
-    type: keepEnum(L.type, ['width','opacity','glow','hue','dash'], 'width'),
+    type: keepEnum(L.type, ['width','opacity','glow','hue','dash','blur','saturation','lightness'], 'width'),
     enabled: !!L.enabled,
     speed: clampNum(L.speed, 1),
     amount: clampNum(L.amount, 0.15),
     deg: clampNum(L.deg, 30),
-    rate: clampNum(L.rate, 120),
-    // audio fields removed
+
+    // Back-compat + new params
+    rate: Number.isFinite(L.rate) ? +L.rate : undefined,          // old px/s
+    dashLen: Number.isFinite(L.dashLen) ? +L.dashLen : undefined,  // new dash length (px)
+    gapFactor: Number.isFinite(L.gapFactor) ? +L.gapFactor : undefined,
   };
 }
 function cloneReact2(r){
@@ -590,6 +593,9 @@ export function initUI({ state, canvas, camera, setTool }){
     if (type==='bounce')     { if (animAmountWrap) animAmountWrap.style.display = ''; if (animAxisWrap) animAxisWrap.style.display=''; }
     if (type==='orbit')       animRadiusWrap && (animRadiusWrap.style.display = '');
     if (type==='shake')      { if (animPosWrap) animPosWrap.style.display = ''; if (animRotWrap) animRotWrap.style.display=''; }
+    if (type==='pendulum')    animRotWrap    && (animRotWrap.style.display = '');
+    if (type==='float')      { if (animPosWrap) animPosWrap.style.display = ''; if (animRotWrap) animRotWrap.style.display=''; }
+    if (type==='drift')       animPosWrap    && (animPosWrap.style.display = '');
   }
   function syncStyleControlsVisibility(type){
     if (!styleSpeedWrap || !styleAmountWrap || !styleHueWrap || !styleRateWrap) return;
@@ -597,7 +603,7 @@ export function initUI({ state, canvas, camera, setTool }){
     styleAmountWrap.style.display = 'none';
     styleHueWrap.style.display    = 'none';
     styleRateWrap.style.display   = 'none';
-    if (type==='width' || type==='opacity' || type==='glow') styleAmountWrap.style.display = '';
+    if (type==='width' || type==='opacity' || type==='glow' || type==='blur' || type==='saturation' || type==='lightness') styleAmountWrap.style.display = '';
     if (type==='hue')  styleHueWrap.style.display = '';
     if (type==='dash') styleRateWrap.style.display = '';
   }
@@ -615,18 +621,31 @@ export function initUI({ state, canvas, camera, setTool }){
     animRotAmt && (animRotAmt.value = (L?.amountRot ?? 0.02));
     animPosAmt && (animPosAmt.value = (L?.amountPos ?? 2));
   }
-  function updateStyleControlsFromSelection(){
-    if (!styleType) return;
-    const s = firstSelected(); if (!s) return;
-    const L = getStyleLayerFromStroke(s);
-    const t = L?.type || 'none';
-    styleType.value = t;
-    syncStyleControlsVisibility(t);
-    styleSpeed  && (styleSpeed.value  = (L?.speed  ?? 1));
-    styleAmount && (styleAmount.value = (L?.amount ?? 0.15));
-    styleHue    && (styleHue.value    = (L?.deg    ?? 30));
-    styleRate   && (styleRate.value   = (L?.rate   ?? 120));
+function updateStyleControlsFromSelection(){
+  if (!styleType) return;
+  const s = firstSelected(); if (!s) return;
+  const L = getStyleLayerFromStroke(s);
+  const t = L?.type || 'none';
+
+  styleType.value = t;
+  const rateLabel = styleRateWrap?.querySelector('.mini');
+  if (rateLabel) rateLabel.textContent = (t === 'dash' ? 'Dash px' : 'px/s');
+
+  syncStyleControlsVisibility(t);
+
+  styleSpeed  && (styleSpeed.value  = (L?.speed  ?? 1));
+  styleAmount && (styleAmount.value = (L?.amount ?? 0.15));
+  styleHue    && (styleHue.value    = (L?.deg    ?? 30));
+
+  if (t === 'dash') {
+    // prefer saved dashLen; sensible fallback based on stroke width
+    const w = s?.w ?? 6;
+    const fallback = Math.max(2, w * 2.2);
+    styleRate && (styleRate.value = (Number.isFinite(L?.dashLen) ? L.dashLen : fallback));
+  } else {
+    styleRate && (styleRate.value = (L?.rate ?? 120));
   }
+}
 
   function updateHud(){
     if (!poseHud) return;
@@ -693,31 +712,47 @@ export function initUI({ state, canvas, camera, setTool }){
   });
 
   // Style control wiring
-  styleType?.addEventListener('change', () => {
-    const type = styleType.value || 'none';
-    syncStyleControlsVisibility(type);
-    const params = {
-      speed: parseFloat(styleSpeed?.value)||1,
-      amount: parseFloat(styleAmount?.value)||0.15,
-      deg: parseFloat(styleHue?.value)||30,
-      rate: parseFloat(styleRate.value)||120,
-    };
-    setStyleForSelection(type, params);
-    updateStyleControlsFromSelection();
-  });
-  [styleSpeed, styleAmount, styleHue, styleRate].forEach(inp=>{
-    inp?.addEventListener('input', () => {
-      const type = styleType?.value || 'none';
-      if (type==='none') return;
-      const params = {
-        speed: parseFloat(styleSpeed?.value)||1,
-        amount: parseFloat(styleAmount?.value)||0.15,
-        deg: parseFloat(styleHue?.value)||30,
-        rate: parseFloat(styleRate.value)||120,
+styleType?.addEventListener('change', () => {
+  const type = styleType.value || 'none';
+  syncStyleControlsVisibility(type);
+
+  const params = (type === 'dash')
+    ? {
+        speed: parseFloat(styleSpeed?.value) || 1,
+        dashLen: parseFloat(styleRate?.value) || 12  // <- now dash length in px
+      }
+    : {
+        speed: parseFloat(styleSpeed?.value) || 1,
+        amount: parseFloat(styleAmount?.value) || 0.15,
+        deg: parseFloat(styleHue?.value) || 30,
+        rate: parseFloat(styleRate?.value) || 120
       };
-      setStyleForSelection(type, params);
-    });
+
+  setStyleForSelection(type, params);
+  updateStyleControlsFromSelection();
+});
+
+// style inputs live update
+[styleSpeed, styleAmount, styleHue, styleRate].forEach(inp=>{
+  inp?.addEventListener('input', () => {
+    const type = styleType?.value || 'none';
+    if (type==='none') return;
+
+    const params = (type === 'dash')
+      ? {
+          speed: parseFloat(styleSpeed?.value) || 1,
+          dashLen: parseFloat(styleRate?.value) || 12
+        }
+      : {
+          speed: parseFloat(styleSpeed?.value) || 1,
+          amount: parseFloat(styleAmount?.value) || 0.15,
+          deg: parseFloat(styleHue?.value) || 30,
+          rate: parseFloat(styleRate?.value) || 120
+        };
+
+    setStyleForSelection(type, params);
   });
+});
 
   // keep HUD synced
   subscribe(updateHud);

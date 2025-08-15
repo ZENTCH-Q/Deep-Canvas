@@ -30,10 +30,11 @@ function rand01FromId(id){
   return x / 4294967295;
 }
 function seedFromId(id, salt){ return rand01FromId(`${id}:${salt}`) * Math.PI * 2; }
-function lfo(shape, t, speed=1, phase=0){
+ function lfo(shape, t, speed=1, phase=0){
   const x = t*speed + phase;
   if (shape==='square')   return Math.sign(Math.sin(x));
   if (shape==='triangle'){ const s = (x/Math.PI)%2; return 1 - 2*Math.abs(s-1); }
+  if (shape==='saw')     { const s=(x/(2*Math.PI))%1; return (s*2)-1; }
   return Math.sin(x); // sine default
 }
 
@@ -66,7 +67,10 @@ export function applyBrushStyle(ctx, camera, s, fast) {
   ctx.lineJoin = 'round';
   if (!fast && s.brush === 'dashed') {
     const dashScreen = Math.max(2, (s.w || 1) * 2.2);
-    const d = dashScreen / Math.max(1e-8, camera.scale);
+    // use CTM if available
+    let k = Math.max(1e-8, camera.scale * Math.max(1, dpr));
+    try { const m = ctx.getTransform(); k = Math.max(1e-8, Math.hypot(m.a, m.b)); } catch {}
+    const d = dashScreen / k;
     ctx.setLineDash([d, d * 0.6]);
   }
 }
@@ -143,6 +147,28 @@ function animXfFromLayers(s, _state, t){
         theta += ar * Math.sin(t*spd*1.37 + pC);
         break;
       }
+      case 'pendulum': {
+        const ar = (+L.amountRot || 0.35) * MOD;      // radians peak
+        const shape = L.shape || 'sine';
+        theta += ar * lfo(shape, t, spd, ph);
+        break;
+      }
+      case 'float': {
+        const ap = (+L.amountPos || 6) * MOD;
+        const ar = (+L.amountRot || 0.06) * MOD;
+        const shape = L.shape || 'sine';
+        tx += ap * 0.7 * lfo(shape, t, spd*0.8, ph + pA);
+        ty += ap * 1.0 * lfo('triangle', t, spd*0.6, ph + pB);
+        theta += ar * lfo('saw', t, spd*0.5, ph + pC);
+        break;
+      }
+      case 'drift': {
+        const ap = (+L.amountPos || 10) * MOD;
+        const shape = L.shape || 'sine';
+        tx += ap * 0.9 * Math.sin(t*spd*0.8 + pA) + ap*0.25*lfo('triangle', t, spd*0.33, ph+pB);
+        ty += ap * 0.9 * Math.cos(t*spd*0.7 + pB) + ap*0.25*lfo(shape,       t, spd*0.47, ph+pC);
+        break;
+      }
       default: break;
     }
   }
@@ -204,7 +230,16 @@ function hueShiftHex(hex, deg){
   return rgbToHex(out.r, out.g, out.b);
 }
 
-function applyStyleLayers(ctx, camera, s, _state, t, baseW){
+function hslShiftHex(hex, {ds=0, dl=0}){
+  const rgb = hexToRgb(hex); if (!rgb) return hex;
+  let {h,s,l} = rgbToHsl(rgb.r, rgb.g, rgb.b);
+  s = Math.max(0, Math.min(1, s + ds));
+  l = Math.max(0, Math.min(1, l + dl));
+  const out = hslToRgb(h, s, l);
+  return rgbToHex(out.r, out.g, out.b);
+}
+
+function applyStyleLayers(ctx, camera, s, _state, t, baseW, dpr = 1){
   const layers = s?.react2?.style?.layers;
   if (!layers || !layers.length) return;
 
@@ -213,6 +248,9 @@ function applyStyleLayers(ctx, camera, s, _state, t, baseW){
   let hueShiftDeg = 0;
   let glowMul = 1;
   let dash = null; 
+  let satShift = 0;
+  let lightShift = 0;
+  let blurPx = 0;
 
   for (const L of layers){
     if (!L?.enabled) continue;
@@ -241,13 +279,59 @@ function applyStyleLayers(ctx, camera, s, _state, t, baseW){
         break;
       }
       case 'dash': {
-        const rate = ((+L.rate || 120) * spd) * MOD; 
-        const dashScreen = Math.max(2, (s.w || 1) * 2.2);
-        const dashLenWorld = dashScreen / Math.max(1e-8, camera.scale);
-        dash = {
-          pattern: [dashLenWorld, dashLenWorld * 0.6],
-          offset:  -(t * rate) / Math.max(1e-8, camera.scale)
-        };
+        // Effective scale factor from current CTM; fallback to camera.scale*dpr
+        let k = Math.max(1e-8, camera.scale * Math.max(1, dpr));
+        try {
+          const m = ctx.getTransform();
+          // isotropic approx – good enough for line dash
+          k = Math.max(1e-8, Math.hypot(m.a, m.b));
+        } catch {}
+
+        const gapFactor = (Number.isFinite(L.gapFactor) ? L.gapFactor : 0.6);
+
+        if (Number.isFinite(L.dashLen)) {
+          const dashLenPx = Math.max(1, L.dashLen);
+          const dashLenWorld = dashLenPx / k;
+          const patternLenWorld = dashLenWorld * (1 + gapFactor);
+          const cyclesPerSec = (+L.speed || 1) * MOD;
+
+          const off = -(t * cyclesPerSec * patternLenWorld);
+          dash = {
+            pattern: [dashLenWorld, dashLenWorld * gapFactor],
+            offset: patternLenWorld ? (off % patternLenWorld) : off
+          };
+        } else {
+          // back-compat: L.rate was px/s
+          const ratePxPerSec = ((+L.rate || 120) * (+L.speed || 1)) * MOD;
+          const dashScreenPx = Math.max(2, (s.w || 1) * 2.2);
+          const dashLenWorld = dashScreenPx / k;
+          const patternLenWorld = dashLenWorld * (1 + gapFactor);
+
+          const off = -(t * (ratePxPerSec / k)); // px/s ÷ (px/world) => world/s
+          dash = {
+            pattern: [dashLenWorld, dashLenWorld * gapFactor],
+            offset: patternLenWorld ? (off % patternLenWorld) : off
+          };
+        }
+        break;
+      }
+
+
+      case 'saturation': {
+        const amt = (+L.amount || 0.25) * MOD;
+        satShift += amt * sig;
+        break;
+      }
+      case 'lightness': {
+        const amt = (+L.amount || 0.25) * MOD;
+        lightShift += amt * sig;
+        break;
+      }
+      case 'blur': {
+        const amt = Math.abs((+L.amount || 1) * MOD);
+        // scale blur with zoom so it “feels” consistent in px
+        const px = Math.max(0, amt * Math.abs(sig) * Math.max(0.5, (s.w||1) * camera.scale * 0.6));
+        blurPx = Math.max(blurPx, px);
         break;
       }
       default: break;
@@ -263,17 +347,25 @@ function applyStyleLayers(ctx, camera, s, _state, t, baseW){
       const baseBlur = Math.max(0, (s.w || 1) * Math.max(1, camera.scale) * 0.9);
       ctx.shadowBlur = Math.max(ctx.shadowBlur||0, baseBlur * glowMul);
     }
-    if (hueShiftDeg) {
-      const shifted = hueShiftHex(s.color, hueShiftDeg);
-      ctx.strokeStyle = shifted;
-      if (s.fill) ctx.fillStyle = shifted;
+    let col = s.color;
+    if (hueShiftDeg) col = hueShiftHex(col, hueShiftDeg);
+    if (satShift || lightShift) {
+      col = hslShiftHex(col, {
+        ds: satShift,
+        dl: lightShift
+      });
     }
+    ctx.strokeStyle = col;
+    if (s.fill) ctx.fillStyle = col;
   }
   if (dash) {
     try {
       ctx.setLineDash(dash.pattern);
       ctx.lineDashOffset = dash.offset;
     } catch {}
+  }
+  if (blurPx > 0) {
+    try { ctx.filter = `blur(${blurPx}px)`; } catch {}
   }
 }
 
@@ -623,7 +715,7 @@ export function render(state, camera, ctx, canvasLike, opts = {}) {
     const bbPad = { minx: bb.minx - padW, miny: bb.miny - padW, maxx: bb.maxx + padW, maxy: bb.maxy + padW };
     if (!rectsIntersect(bbPad, view)) continue;
     visibleCount++;
-    applyBrushStyle(ctx, camera, s, fast);
+    applyBrushStyle(ctx, camera, s, fast, dpr);
     strokeCommonSetup(ctx, camera, s, fast);
     const baseW = Math.max(0.75 / Math.max(1, camera.scale), (s.w || 1));
     ctx.lineWidth = baseW;
@@ -656,11 +748,7 @@ export function render(state, camera, ctx, canvasLike, opts = {}) {
       if (axf.tx || axf.ty) ctx.translate(axf.tx, axf.ty);
       animApplied = true;
     }
-    if (!interacting) {
-      applyStyleLayers(ctx, camera, s, state, tNow, baseW);
-    } else {
-      applyStyleLayers(ctx, camera, s, state, 0, baseW);
-    }
+    applyStyleLayers(ctx, camera, s, state, tNow, baseW, dpr);
     if (s.kind === 'path') {
       if (s.pts && s.n != null) {
         const viewTA = getLODView(s, camera, fast);
@@ -743,7 +831,7 @@ export function render(state, camera, ctx, canvasLike, opts = {}) {
     if (animApplied) ctx.restore();
     if (unbaked) ctx.restore();
     try { ctx.lineDashOffset = 0; } catch {}
-    ctx.setLineDash([]); ctx.shadowBlur = 0; ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
+    ctx.setLineDash([]); ctx.shadowBlur = 0; ctx.filter = 'none'; ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
   }
 
   if (state.selection && state.selection.size) {
