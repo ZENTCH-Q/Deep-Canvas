@@ -10,6 +10,10 @@ https://github.com/ZENTCH-Q/Deep-Canvas.git
 
 ---
 
+https://github.com/user-attachments/assets/3100fbfb-1c7b-46aa-b08e-c56a8ae421fd
+
+
+
 ## ✨ Features
 
 - **Blazing renderer** — spatial index + LOD simplification keeps big drawings smooth
