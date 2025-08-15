@@ -10,14 +10,15 @@ const INITIAL_CAP_POINTS = 512;
 
 function makeTA(pointsCap = INITIAL_CAP_POINTS){
   const cap = Math.max(pointsCap, 1);
-  return new Float32Array(cap * STRIDE);
+  return new Float64Array(cap * STRIDE);
 }
 function ensureCapacityTA(stroke, wantPoints){
   const needFloats = wantPoints * STRIDE;
   if (stroke.pts.length >= needFloats) return;
   let nf = stroke.pts.length;
   while (nf < needFloats) nf *= 2;
-  const next = new Float32Array(nf);
+  const Ctor = stroke.pts?.constructor || Float64Array;
+  const next = new Ctor(nf);
   next.set(stroke.pts.subarray(0, stroke.n));
   stroke.pts = next;
 }
@@ -84,6 +85,7 @@ export function appendPoint(stroke, pt){
   growBBox(stroke.bbox, pt);
   extendChunksOnAppend(stroke, pt.x, pt.y);
   delete stroke._lodCache;
+  stroke.timestamp = performance.now();
 
   if (!shouldDeferIndex()) update(grid, stroke);
   markDirty();
@@ -179,7 +181,8 @@ export function restoreGeometry(s, snap){
     s.w = snap.w;
     s.bbox = { ...snap.bbox };
     if (snap.pts){
-      s.pts = new Float32Array(snap.pts.length);
+      const Ctor = (snap.pts && snap.pts.constructor) || Float64Array;
+      s.pts = new Ctor(snap.pts.length);
       s.pts.set(snap.pts);
       s.n = snap.pts.length;
       s._chunks = snap.chunks ? snap.chunks.map(c => ({ i0:c.i0, i1:c.i1, bbox:{...c.bbox} })) : null;

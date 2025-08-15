@@ -380,6 +380,8 @@ canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 let wheelAccum = 0, wheelPoint = { x:0, y:0 }, wheelRAF = 0;
 let wheelIdleTimer = 0;
 let lastNavRefresh = 0;
+let lastRenormAt = 0;
+const RENORM_MIN_GAP = 400; // ms
 
 const NAV_REFRESH_MS = 1_00;
 const WHEEL_IDLE_MS  = 110;
@@ -463,8 +465,12 @@ function applyWheelZoom(){
 
   clearTimeout(wheelIdleTimer);
   wheelIdleTimer = setTimeout(() => {
-    const started = renormalizeIfNeeded(camera, state.strokes, { budgetMs: 4 }, state);
-    if (started) beginFreeze();
+    const now = performance.now();
+    let started = false;
+    if (now - lastRenormAt > RENORM_MIN_GAP) {
+      started = renormalizeIfNeeded(camera, state.strokes, { budgetMs: 4 }, state);
+      if (started) { lastRenormAt = now; beginFreeze(); }
+    }
     whenRenormalized().then(() => {
       if (started) rebuildIndexAsync();
       applyAdaptiveGridCell();

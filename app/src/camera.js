@@ -119,6 +119,8 @@ export function renormalizeIfNeeded(camera, strokes, opts={}, state){
             }
             const chunksDone = bakeChunks(st, s, tx, ty, budgetStop);
             if (!chunksDone) { requestAnimationFrame(step); return; }
+            st._chunks = null;
+            st._bakeK = 0;
           } else if (st.kind === 'shape'){
             st.start.x = st.start.x * s + tx;
             st.start.y = st.start.y * s + ty;
@@ -128,6 +130,8 @@ export function renormalizeIfNeeded(camera, strokes, opts={}, state){
 
           st.w = (st.w || 0) * s;
           st.bbox = xformBBox(st.bbox, s, tx, ty);
+          delete st._lodCache;
+          st.timestamp = performance.now();
           st._baked = true;
         }
 
@@ -199,11 +203,19 @@ function transformStroke(st, s, dx, dy){
   }
   st.w = (st.w || 0) * s;
   xformBBoxInPlace(st.bbox, s, dx, dy);
-  if (st._chunks && st._chunks.length){
-    for (let k=0;k<st._chunks.length;k++){
-      xformBBoxInPlace(st._chunks[k].bbox, s, dx, dy);
-    }
-  }
+ st._chunks = null;
+ delete st._lodCache;
+ try {
+   const layers = st?.react2?.anim?.layers;
+   if (Array.isArray(layers)) {
+     for (const L of layers) {
+       if (L && L.pivot && Number.isFinite(L.pivot.x) && Number.isFinite(L.pivot.y)) {
+         L.pivot.x = L.pivot.x * s + dx;
+         L.pivot.y = L.pivot.y * s + dy;
+       }
+     }
+   }
+ } catch {}
 }
 
 export function worldGCIfNeeded(state, camera, canvas){

@@ -9,11 +9,11 @@ const clamp01 = v => v < 0 ? 0 : (v > 1 ? 1 : v);
 
 function tolWorld(camera, fast = false){
   const base = 0.75 / Math.max(1e-8, camera.scale);
-  return fast ? base * 2.5 : base;
+  return fast ? base * 1.6 : base;
 }
 function pickEpsilon(camera, fast){
   const target = tolWorld(camera, fast);
-  const levels = [0.5, 1, 2, 4, 8, 16];
+  const levels = [0.25, 0.5, 1, 2, 4, 8];
   for (let i=0;i<levels.length;i++) if (levels[i] >= target) return levels[i];
   return levels[levels.length-1];
 }
@@ -240,6 +240,8 @@ function hslShiftHex(hex, {ds=0, dl=0}){
 }
 
 function applyStyleLayers(ctx, camera, s, _state, t, baseW, dpr = 1){
+  // Don’t animate style during navigation to avoid “shape drift”
+  if (_state?._navActive) return;
   const layers = s?.react2?.style?.layers;
   if (!layers || !layers.length) return;
 
@@ -369,8 +371,8 @@ function applyStyleLayers(ctx, camera, s, _state, t, baseW, dpr = 1){
   }
 }
 
-function drawPolylineFastWorldTA(ctx, pts, n, camera, i0, i1, fast) {
-  const tol = tolWorld(camera, fast);
+function drawPolylineFastWorldTA(ctx, pts, n, camera, i0, i1, fast, tolOverride) {
+  const tol = Number.isFinite(tolOverride) ? tolOverride : tolWorld(camera, fast);
   let off = i0 * STRIDE;
   let lx = pts[off], ly = pts[off + 1];
   for (let ip = i0 + 1; ip <= i1; ip++) {
@@ -391,7 +393,7 @@ function drawShapeWorld(ctx, s, camera) {
   if (s.shape === 'rect') {
     let x = Math.min(a.x, b.x), y = Math.min(a.y, b.y);
     let w = Math.abs(b.x - a.x), h = Math.abs(b.y - a.y);
-    const minWorld = 0.5 / Math.max(1e-8, camera.scale);
+    const minWorld = 0 / Math.max(1e-8, camera.scale);
     const cx = x + w / 2, cy = y + h / 2;
     if (w < minWorld) { w = minWorld; x = cx - w / 2; }
     if (h < minWorld) { h = minWorld; y = cy - h / 2; }
@@ -400,7 +402,7 @@ function drawShapeWorld(ctx, s, camera) {
   }
   if (s.shape === 'ellipse') {
     const cx = (a.x + b.x) / 2, cy = (a.y + b.y) / 2;
-    const minWorld = 0.5 / Math.max(1e-8, camera.scale);
+    const minWorld = 0 / Math.max(1e-8, camera.scale);
     const rx = Math.max(minWorld, Math.abs(b.x - a.x) / 2);
     const ry = Math.max(minWorld, Math.abs(b.y - a.y) / 2);
     ctx.beginPath(); ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
@@ -428,7 +430,7 @@ function perpDist(ax, ay, bx, by, px, py) {
   return Math.abs(ux * vy - uy * vx) / len;
 }
 function rdpSimplifyTA(pts, n, epsilon) {
-  const m = Math.max(0, Math.floor(n / STRIDE));
+  const Ctor = pts?.constructor || Float32Array;
   if (m <= 2 || !Number.isFinite(epsilon) || epsilon <= 0) {
     const out = new Float32Array(n);
     out.set(pts.subarray(0, n));
@@ -457,11 +459,11 @@ function rdpSimplifyTA(pts, n, epsilon) {
   let cnt = 0;
   for (let i = 0; i < m; i++) if (keep[i]) cnt++;
   if (cnt < 2) {
-    const out = new Float32Array(n);
+    const out = new Ctor(n);
     out.set(pts.subarray(0, n));
     return out;
   }
-  const out = new Float32Array(cnt * STRIDE);
+  const out = new Ctor(cnt * STRIDE);
   let w = 0;
   for (let i = 0; i < m; i++) {
     if (!keep[i]) continue;
@@ -481,7 +483,12 @@ function getLODView(stroke, camera, fast) {
   if ((stroke.n / STRIDE) <= 128) return orig;
 
   try {
-    const eps = pickEpsilon(camera, fast);
+    const now = performance.now();
+    const ageMs = now - (stroke.timestamp || 0);
+    if (ageMs < 220) return orig; 
+    const epsBase = pickEpsilon(camera, fast);
+    const w = Math.max(0.5, stroke.w || 1);
+    const eps = Math.min(epsBase, w * 0.5); 
     try {
       const bb = stroke.bbox;
       const diag = Math.hypot(bb.maxx - bb.minx, bb.maxy - bb.miny);
@@ -624,8 +631,8 @@ export function render(state, camera, ctx, canvasLike, opts = {}) {
     const bx = tx1 - a * tx0;
     const by = ty1 - a * ty0;
     const isZooming = Math.abs(a - 1) > 1e-3;
-    const sbx = isZooming ? bx : (Math.round(dpr * bx) / dpr);
-    const sby = isZooming ? by : (Math.round(dpr * by) / dpr);
+    const sbx = bx;
+    const sby = by;
 
     ctx.setTransform(dpr * a, 0, 0, dpr * a, dpr * sbx, dpr * sby);
     ctx.drawImage(state._navBmp, 0, 0);
@@ -720,7 +727,12 @@ export function render(state, camera, ctx, canvasLike, opts = {}) {
     const baseW = Math.max(0.75 / Math.max(1, camera.scale), (s.w || 1));
     ctx.lineWidth = baseW;
     if (unbaked) { ctx.save(); ctx.transform(bake.s, 0, 0, bake.s, bake.tx, bake.ty); }
-    const interacting = !!(state._transformActive || state._drawingActive || state._erasingActive);
+    const interacting = !!(
+      state._transformActive ||
+      state._drawingActive  ||
+      state._erasingActive  ||
+      state._navActive      // <- freeze animations while navigating
+    );
     const axf = interacting ? null : animXfFromLayers(s, state, tNow);
     let animApplied = false;
     if (axf) {
@@ -751,21 +763,37 @@ export function render(state, camera, ctx, canvasLike, opts = {}) {
     applyStyleLayers(ctx, camera, s, state, tNow, baseW, dpr);
     if (s.kind === 'path') {
       if (s.pts && s.n != null) {
-        const viewTA = getLODView(s, camera, fast);
+        const live = state._drawingActive || state._erasingActive || state._transformActive;
+        const viewTA = live
+          ? { pts: s.pts, n: s.n, usedLOD: false }
+          : getLODView(s, camera, fast);
         const pts = viewTA.pts, n = viewTA.n;
         if (!pts || n < STRIDE * 2) { if (animApplied) ctx.restore(); if (unbaked) ctx.restore(); continue; }
+        const tolLive = live ? (0.18 / Math.max(1e-8, camera.scale)) : null; // ~0.18px at 1×
         if (viewTA.usedLOD) {
           ctx.beginPath();
           ctx.moveTo(pts[0], pts[1]);
-          drawPolylineFastWorldTA(ctx, pts, n, camera, 0, (n / STRIDE) - 1, fast);
+          drawPolylineFastWorldTA(ctx, pts, n, camera, 0, (n / STRIDE) - 1, fast, tolLive);
         } else {
           const viewInStrokeSpace = unbaked ? invXformBBox(view, bake.s, bake.tx, bake.ty) : view;
-          const vr = computeVisibleRange(s, viewInStrokeSpace, Math.max(1, ctx.lineWidth) * 2);
-          if (!vr) { if (animApplied) ctx.restore(); if (unbaked) ctx.restore(); continue; }
+          let vr = computeVisibleRange(s, viewInStrokeSpace, Math.max(1, ctx.lineWidth) * 2);
+          if (!vr) {
+            // Chunks likely stale after a renorm/transform → fall back safely
+            s._chunks = null;                 // drop stale chunk index
+            // draw full range (cheap at high zoom; you’re drawing only what’s on screen anyway)
+            ctx.beginPath();
+            ctx.moveTo(pts[0], pts[1]);
+            drawPolylineFastWorldTA(ctx, pts, n, camera, 0, (n / STRIDE) - 1, fast, tolLive);
+          } else {
+            let off = vr.i0 * STRIDE;
+            ctx.beginPath();
+            ctx.moveTo(pts[off], pts[off + 1]);
+            drawPolylineFastWorldTA(ctx, pts, n, camera, vr.i0, vr.i1, fast, tolLive);
+          }
           let off = vr.i0 * STRIDE;
           ctx.beginPath();
           ctx.moveTo(pts[off], pts[off + 1]);
-          drawPolylineFastWorldTA(ctx, pts, n, camera, vr.i0, vr.i1, fast);
+          drawPolylineFastWorldTA(ctx, pts, n, camera, vr.i0, vr.i1, fast, tolLive);
         }
 
         if (s.fill && s.mode !== 'erase') {
