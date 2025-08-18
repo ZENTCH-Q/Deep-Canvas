@@ -443,9 +443,125 @@ export function initUI({ state, canvas, camera, setTool }){
     const styleSpeed=document.getElementById('styleSpeed'); const styleAmount=document.getElementById('styleAmount');
     const styleHue=document.getElementById('styleHue'); const styleRate=document.getElementById('styleRate');
     styleSpeed&&(styleSpeed.value=(L?.speed??1)); styleAmount&&(styleAmount.value=(L?.amount??0.15)); styleHue&&(styleHue.value=(L?.deg??30));
-    if (t==='dash'){ const w=s?.w??6; const fallback=Math.max(2,w*2.2); styleRate&&(styleRate.value=(Number.isFinite(L?.dashLen)?L.dashLen:fallback)); }
+    if (t==='dash'){const w=s?.w??6; const fallback=Math.max(2,w*2.2);styleRate.value = (Number.isFinite(L?.dashLen) ? L.dashLen : fallback);}
     else { styleRate&&(styleRate.value=(L?.rate??120)); }
   }
+
+
+  function firstSel(){ return Array.from(state.selection||[])[0]||null; }
+
+  function ensureAnimLayer(s) {
+    s.react2 = s.react2 || {};
+    const anim = s.react2.anim || (s.react2.anim = { layers: [] });
+    let L = anim.layers[0];
+    if (!L) anim.layers[0] = L = { enabled: true, type: 'none', speed: 1 };
+    return L;
+  }
+
+  function ensureStyleLayer(s){
+    s.react2 = s.react2 || {};
+    const style = s.react2.style || (s.react2.style = { layers: [] });
+    return style.layers[0] || (style.layers[0] = { enabled:true, type:'none', speed:1 });
+  }
+
+  function commit(mutator){
+    const s = firstSel(); if(!s) return;
+    mutator(s); markDirty(); scheduleRender(); updateHud();
+  }
+
+  // ---- wire ANIM controls
+  const animType   = document.getElementById('animType');
+  const animSpeed  = document.getElementById('animSpeed');
+  const animAmount = document.getElementById('animAmount');
+  const animAxis   = document.getElementById('animAxis');
+  const animRadiusX= document.getElementById('animRadiusX');
+  const animRadiusY= document.getElementById('animRadiusY');
+  const animRotAmt = document.getElementById('animRotAmt');
+  const animPosAmt = document.getElementById('animPosAmt');
+
+  animType?.addEventListener('change', () => commit(s => {
+    const L = ensureAnimLayer(s);
+    const t = animType.value;
+    L.type = t;
+    L.enabled = (t !== 'none');
+  }));
+
+  animSpeed?.addEventListener('input', () => commit(s => {
+    const L = ensureAnimLayer(s);
+    L.speed = Number(animSpeed.value) || 1;
+  }));
+
+  animAmount?.addEventListener('input', () => commit(s => {
+    const L = ensureAnimLayer(s);
+    L.amount = Number(animAmount.value) || 0;
+  }));
+
+  animAxis?.addEventListener('change', () => commit(s => {
+    const L = ensureAnimLayer(s);
+    L.axis = animAxis.value || 'xy';
+  }));
+
+  animRadiusX?.addEventListener('input', () => commit(s => {
+    const L = ensureAnimLayer(s);
+    L.radiusX = Number(animRadiusX.value) || 0;
+  }));
+
+  animRadiusY?.addEventListener('input', () => commit(s => {
+    const L = ensureAnimLayer(s);
+    L.radiusY = Number(animRadiusY.value) || 0;
+  }));
+
+  animRotAmt?.addEventListener('input', () => commit(s => {
+    const L = ensureAnimLayer(s);
+    L.amountRot = Number(animRotAmt.value) || 0;
+  }));
+
+  animPosAmt?.addEventListener('input', () => commit(s => {
+    const L = ensureAnimLayer(s);
+    L.amountPos = Number(animPosAmt.value) || 0;
+  }));
+
+  // ---- wire STYLE controls (optional but same problem)
+  const styleType   = document.getElementById('styleType');
+  const styleSpeed  = document.getElementById('styleSpeed');
+  const styleAmount = document.getElementById('styleAmount');
+  const styleHue    = document.getElementById('styleHue');
+  const styleRate   = document.getElementById('styleRate');
+
+  styleType?.addEventListener('change', () => commit(s => {
+    const L = ensureStyleLayer(s);
+    const t = styleType.value;
+    L.type = t;
+    L.enabled = (t !== 'none');
+  }));
+
+  styleSpeed?.addEventListener('input', () => commit(s => {
+    const L = ensureStyleLayer(s);
+    L.speed = Number(styleSpeed.value) || 1;
+  }));
+
+  styleAmount?.addEventListener('input', () => commit(s => {
+    const L = ensureStyleLayer(s);
+    L.amount = Number(styleAmount.value) || 0;
+  }));
+
+  styleHue?.addEventListener('input', () => commit(s => {
+    const L = ensureStyleLayer(s);
+    L.deg = Number(styleHue.value) || 0;
+  }));
+
+  styleRate?.addEventListener('input', () => commit(s => {
+    const L = ensureStyleLayer(s);
+    const t = (styleType?.value || L.type || 'none');
+    const v = Math.max(1, Math.round(Number(styleRate.value) || 0));
+    if (t === 'dash') {
+      L.dashLen = v;         // <- this controls dash length in px
+      delete L.rate;         // optional: avoid confusion in dash mode
+    } else {
+      L.rate = Math.max(1, Number(styleRate.value) || 0); // px/s for other styles
+      delete L.dashLen;
+    }
+  }));
 
   function updateHud(){
     const poseHud = document.getElementById('poseHud');
@@ -470,3 +586,4 @@ export function initUI({ state, canvas, camera, setTool }){
 
   return { updatePosePanel: updateHud, updatePoseHud: updateHud };
 }
+
