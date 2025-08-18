@@ -469,6 +469,29 @@ export function initUI({ state, canvas, camera, setTool }){
     mutator(s); markDirty(); scheduleRender(); updateHud();
   }
 
+  function eachSel(fn){
+    const arr = Array.from(state.selection || []);
+    if (!arr.length) return false;
+    for (const s of arr) fn(s);
+    markDirty(); scheduleRender(); updateHud();
+    return true;
+  }
+
+  // shared pivot at selection center (world space)
+  function selectionCenter() {
+    const bb = selectionBBoxWorld();
+    return bb ? { x: (bb.minx + bb.maxx) / 2, y: (bb.miny + bb.maxy) / 2 } : null;
+  }
+
+  // Optional: reuse an existing groupId if present; else create one
+  function pickGroupId(){
+    for (const s of (state.selection || [])){
+      const L = getAnimLayer(s);
+      if (L?.groupId) return L.groupId;
+    }
+    return 'g-' + Math.random().toString(36).slice(2,10);
+  }
+
   // ---- wire ANIM controls
   const animType   = document.getElementById('animType');
   const animSpeed  = document.getElementById('animSpeed');
@@ -479,89 +502,91 @@ export function initUI({ state, canvas, camera, setTool }){
   const animRotAmt = document.getElementById('animRotAmt');
   const animPosAmt = document.getElementById('animPosAmt');
 
-  animType?.addEventListener('change', () => commit(s => {
-    const L = ensureAnimLayer(s);
+  animType?.addEventListener('change', () => {
     const t = animType.value;
-    L.type = t;
-    L.enabled = (t !== 'none');
-  }));
+    const pv = selectionCenter();
+    const gid = pickGroupId();
+    eachSel(s => {
+      const L = ensureAnimLayer(s);
+      L.type = t;
+      L.enabled = (t !== 'none');
+      if (t !== 'none' && pv){
+        L.pivot = { x: pv.x, y: pv.y };   // shared center => spins as one unit
+        L.groupId = gid;                  // keep random-phased styles in sync later
+      }
+    });
+  });
 
-  animSpeed?.addEventListener('input', () => commit(s => {
-    const L = ensureAnimLayer(s);
-    L.speed = Number(animSpeed.value) || 1;
-  }));
+  animSpeed?.addEventListener('input', () => {
+    const v = Number(animSpeed.value) || 1;
+    eachSel(s => { ensureAnimLayer(s).speed = v; });
+  });
 
-  animAmount?.addEventListener('input', () => commit(s => {
-    const L = ensureAnimLayer(s);
-    L.amount = Number(animAmount.value) || 0;
-  }));
+  animAmount?.addEventListener('input', () => {
+    const v = Number(animAmount.value) || 0;
+    eachSel(s => { ensureAnimLayer(s).amount = v; });
+  });
 
-  animAxis?.addEventListener('change', () => commit(s => {
-    const L = ensureAnimLayer(s);
-    L.axis = animAxis.value || 'xy';
-  }));
+  animAxis?.addEventListener('change', () => {
+    const v = animAxis.value || 'xy';
+    eachSel(s => { ensureAnimLayer(s).axis = v; });
+  });
 
-  animRadiusX?.addEventListener('input', () => commit(s => {
-    const L = ensureAnimLayer(s);
-    L.radiusX = Number(animRadiusX.value) || 0;
-  }));
+  animRadiusX?.addEventListener('input', () => {
+    const v = Number(animRadiusX.value) || 0;
+    eachSel(s => { ensureAnimLayer(s).radiusX = v; });
+  });
 
-  animRadiusY?.addEventListener('input', () => commit(s => {
-    const L = ensureAnimLayer(s);
-    L.radiusY = Number(animRadiusY.value) || 0;
-  }));
+  animRadiusY?.addEventListener('input', () => {
+    const v = Number(animRadiusY.value) || 0;
+    eachSel(s => { ensureAnimLayer(s).radiusY = v; });
+  });
 
-  animRotAmt?.addEventListener('input', () => commit(s => {
-    const L = ensureAnimLayer(s);
-    L.amountRot = Number(animRotAmt.value) || 0;
-  }));
+  animRotAmt?.addEventListener('input', () => {
+    const v = Number(animRotAmt.value) || 0;
+    eachSel(s => { ensureAnimLayer(s).amountRot = v; });
+  });
 
-  animPosAmt?.addEventListener('input', () => commit(s => {
-    const L = ensureAnimLayer(s);
-    L.amountPos = Number(animPosAmt.value) || 0;
-  }));
+  animPosAmt?.addEventListener('input', () => {
+    const v = Number(animPosAmt.value) || 0;
+    eachSel(s => { ensureAnimLayer(s).amountPos = v; });
+  });
 
-  // ---- wire STYLE controls (optional but same problem)
-  const styleType   = document.getElementById('styleType');
-  const styleSpeed  = document.getElementById('styleSpeed');
-  const styleAmount = document.getElementById('styleAmount');
-  const styleHue    = document.getElementById('styleHue');
-  const styleRate   = document.getElementById('styleRate');
-
-  styleType?.addEventListener('change', () => commit(s => {
-    const L = ensureStyleLayer(s);
+  // --- STYLE: make "Dash px" + others apply to all
+  styleType?.addEventListener('change', () => {
     const t = styleType.value;
-    L.type = t;
-    L.enabled = (t !== 'none');
-  }));
+    eachSel(s => {
+      const L = ensureStyleLayer(s);
+      L.type = t;
+      L.enabled = (t !== 'none');
+    });
+  });
 
-  styleSpeed?.addEventListener('input', () => commit(s => {
-    const L = ensureStyleLayer(s);
-    L.speed = Number(styleSpeed.value) || 1;
-  }));
+  styleSpeed?.addEventListener('input', () => {
+    const v = Number(styleSpeed.value) || 1;
+    eachSel(s => { ensureStyleLayer(s).speed = v; });
+  });
 
-  styleAmount?.addEventListener('input', () => commit(s => {
-    const L = ensureStyleLayer(s);
-    L.amount = Number(styleAmount.value) || 0;
-  }));
+  styleAmount?.addEventListener('input', () => {
+    const v = Number(styleAmount.value) || 0;
+    eachSel(s => { ensureStyleLayer(s).amount = v; });
+  });
 
-  styleHue?.addEventListener('input', () => commit(s => {
-    const L = ensureStyleLayer(s);
-    L.deg = Number(styleHue.value) || 0;
-  }));
+  styleHue?.addEventListener('input', () => {
+    const v = Number(styleHue.value) || 0;
+    eachSel(s => { ensureStyleLayer(s).deg = v; });
+  });
 
-  styleRate?.addEventListener('input', () => commit(s => {
-    const L = ensureStyleLayer(s);
-    const t = (styleType?.value || L.type || 'none');
+  // Dash control: when in 'dash' type, this is dashLen (px). Otherwise it's rate (px/s)
+  styleRate?.addEventListener('input', () => {
+    const t = styleType?.value || 'none';
     const v = Math.max(1, Math.round(Number(styleRate.value) || 0));
-    if (t === 'dash') {
-      L.dashLen = v;         // <- this controls dash length in px
-      delete L.rate;         // optional: avoid confusion in dash mode
-    } else {
-      L.rate = Math.max(1, Number(styleRate.value) || 0); // px/s for other styles
-      delete L.dashLen;
-    }
-  }));
+    eachSel(s => {
+      const L = ensureStyleLayer(s);
+      if (t === 'dash') { L.dashLen = v; delete L.rate; }
+      else { L.rate = v; delete L.dashLen; }
+    });
+  });
 
   function updateHud(){
     const poseHud = document.getElementById('poseHud');
