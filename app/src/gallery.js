@@ -56,10 +56,20 @@ function inlineRename(nameEl, doc, commitCb) {
   };
 
   const onKey = (e) => {
-    if (e.key === 'Enter') { e.preventDefault(); nameEl.removeEventListener('keydown', onKey); finish(true); }
-    if (e.key === 'Escape') { e.preventDefault(); nameEl.removeEventListener('keydown', onKey); finish(false); }
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      e.stopPropagation();             // prevent card from handling Enter (open)
+      nameEl.removeEventListener('keydown', onKey);
+      finish(true);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      nameEl.removeEventListener('keydown', onKey);
+      finish(false);
+    }
   };
-  nameEl.addEventListener('keydown', onKey);
+  // Capture to intercept before it bubbles to the card
+  nameEl.addEventListener('keydown', onKey, { capture: true });
   nameEl.addEventListener('blur', () => finish(true), { once: true });
 }
 
@@ -138,10 +148,17 @@ export function initGalleryView(options = {}) {
     const meta = el('div', 'g-meta');
     const nameEl = el('span', 'g-name');
     nameEl.textContent = it.name || 'Untitled';
+    nameEl.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if ((it.name || 'Untitled') === 'Untitled') {
+        inlineRename(nameEl, it, (nv) => { opts.onRename?.(it.id, nv); it.name = nv; });
+      }
+    });
     nameEl.addEventListener('dblclick', (e) => {
       e.stopPropagation();
       inlineRename(nameEl, it, (nv) => { opts.onRename?.(it.id, nv); it.name = nv; });
     });
+    nameEl.addEventListener('mousedown', (e) => e.stopPropagation());
     meta.appendChild(nameEl);
 
     card.appendChild(thumb);
@@ -151,7 +168,14 @@ export function initGalleryView(options = {}) {
     const open = () => opts.onOpen?.(it.id);
     card.addEventListener('dblclick', open);
     card.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') open();
+      if (e.key === 'Enter') {
+        // If user is editing the title, Enter confirms rename instead of opening
+        if (document.activeElement && document.activeElement.isContentEditable) {
+          e.preventDefault();
+          return;
+        }
+        open();
+      }
       else if (e.key === 'F2') { e.preventDefault(); inlineRename(nameEl, it, (nv) => { opts.onRename?.(it.id, nv); it.name = nv; }); }
       else if (e.key === 'Delete') { const ok = confirm(`Delete “${it.name || 'Untitled'}”?`); if (ok) { opts.onDelete?.(it.id); remove(it.id); } }
     });
