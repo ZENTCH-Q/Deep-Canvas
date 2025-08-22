@@ -12,6 +12,9 @@ const MOVE_TOL_SQ = 4 * 4;
 function rectFrom(a, b){
   return { minx: Math.min(a.x,b.x), miny: Math.min(a.y,b.y), maxx: Math.max(a.x,b.x), maxy: Math.max(a.y,b.y) };
 }
+function bboxIntersects(a, b){
+  return !(a.maxx < b.minx || a.minx > b.maxx || a.maxy < b.miny || a.miny > b.maxy);
+}
 function bboxContains(outer, inner){
   return outer.minx <= inner.minx && outer.miny <= inner.miny &&
          outer.maxx >= inner.maxx && outer.maxy >= inner.maxy;
@@ -155,6 +158,8 @@ export class SelectTool {
     this.dragging   = false;
     this.additive   = false;
     this.strictContain = false;
+    this._downClientX = 0;
+    this._downClientY = 0;
     this.mode = null;   
     this.handle = null;    
     this.startBBox = null;
@@ -178,12 +183,17 @@ export class SelectTool {
     scheduleRender();
   }
 
-  _selectMarquee(rect, additive, contain=false){
-    const cands = query(grid, rect);
+  _selectMarquee(rect, additive, contain = false){
+    let cands = query(grid, rect);
+    if (!cands || cands.size === 0) cands = new Set(this.state.strokes);
+
     const picked = new Set();
     for (const s of cands){
-      const pad = (s.w || 0) * 1.0;
-      const bb = { minx: s.bbox.minx - pad, miny: s.bbox.miny - pad, maxx: s.bbox.maxx + pad, maxy: s.bbox.maxy + pad };
+      const pad = contain ? 0 : Math.max((s.w || 0) * 1.2, 0.5);
+      const bb = {
+        minx: s.bbox.minx - pad, miny: s.bbox.miny - pad,
+        maxx: s.bbox.maxx + pad, maxy: s.bbox.maxy + pad
+     };
       if (contain ? bboxContains(rect, bb) : bboxIntersects(bb, rect)) {
         picked.add(s);
       }
@@ -193,10 +203,13 @@ export class SelectTool {
 
   onPointerDown(e){
     if (e.button !== 0) return;
+    try { e.preventDefault(); } catch {}
     try { this.canvas.setPointerCapture(e.pointerId); } catch {}
     const r = this.canvas.getBoundingClientRect();
     this.downScreen = { x: e.clientX - r.left, y: e.clientY - r.top };
     this.downWorld  = this.camera.screenToWorld(this.downScreen);
+    this._downClientX = e.clientX;
+    this._downClientY = e.clientY;
     this.dragging = false;
     this.additive = !!e.shiftKey;
     this.strictContain = !!e.altKey;
@@ -354,8 +367,8 @@ export class SelectTool {
       } else {
         const rect = this.state._marquee;
         if (rect) {
-          // Alt/Option during release or at drag start => inside-only
-          const contain = !!e.altKey || this.strictContain;
+          const ltrDrag = (e.clientX >= this._downClientX);
+          const contain = (!!e.altKey || this.strictContain) || ltrDrag;
           this._selectMarquee(rect, this.additive, contain);
         }
       }
