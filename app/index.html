@@ -87,6 +87,58 @@
     width:38px;height:38px;display:grid;place-items:center;border-radius:9px;border:1px solid transparent;
     background:transparent;color:var(--text);cursor:pointer;transition:background .15s ease,outline-color .15s ease
   }
+
+  /* Dock tooltips */
+  .dock .tool { position: relative; }
+
+  .dock .tool::after {
+    /* fallback to aria-label if no data-tool */
+    content: attr(aria-label);
+    position: absolute;
+    left: 50%;
+    bottom: calc(100% + 12px);
+    transform: translateX(-50%) translateY(4px);
+    padding: 6px 8px;
+    border-radius: 8px;
+    background: var(--label-bg);
+    color: var(--label-text);
+    border: 1px solid var(--label-stroke);
+    font: 700 11px/1 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+    white-space: nowrap;
+    box-shadow: 0 10px 26px rgba(0,0,0,.28);
+    opacity: 0;
+    pointer-events: none;
+    z-index: 1000;
+    transition: opacity .12s ease, transform .12s ease;
+    text-transform: capitalize;
+  }
+  .dock .tool[data-tool]::after { content: attr(data-tool); }
+
+  .dock .tool::before {
+    content: "";
+    position: absolute;
+    left: 50%;
+    bottom: calc(100% + 6px);
+    transform: translateX(-50%) translateY(4px);
+    width: 0; height: 0;
+    border: 6px solid transparent;
+    border-top-color: var(--label-bg);
+    filter: drop-shadow(0 -1px 0 var(--label-stroke));
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .12s ease, transform .12s ease;
+    z-index: 1000;
+  }
+
+  .dock .tool:is(:hover, :focus-visible)::after,
+  .dock .tool:is(:hover, :focus-visible)::before {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+
+  /* (optional) make the droplet match the accent when active */
+  .dock [data-tool="paint"].active svg .drop { fill: currentColor; }
+
   .tool:hover{background:var(--panel-2)} .tool.active{outline:2px solid var(--accent);outline-offset:2px}
 
   .tool.tool-chip{position:relative;width:auto;padding:0 6px}
@@ -432,8 +484,10 @@
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
     </button>
     <button data-tool="paint" class="tool" aria-label="Fill">
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-        <path d="M19 11c0 3-7 8-7 8s-7-5-7-8a7 7 0 0 1 14 0z"/><path d="M12 3v6"/><path d="M8 7h8"/>
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M4 13l8-8 6 6-8 8-6-6z"/>
+        <path d="M8.5 11.5c1.6-2 5.4-2 7 0"/>
+        <path class="drop" d="M21 16c0 1.8-1.5 3-1.5 3S18 17.8 18 16a1.5 1.5 0 1 1 3 0z" fill="currentColor" stroke="none"/>
       </svg>
     </button>
     <button data-tool="erase" class="tool" aria-label="Erase">

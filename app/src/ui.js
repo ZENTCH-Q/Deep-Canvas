@@ -607,6 +607,55 @@ export function initUI({ state, canvas, camera, setTool }){
 
     updateAnimFromSel(); updateStyleFromSel();
   }
+
+const _animStash = new Map(); // key: stroke object, value: deep copy of layer 0
+let _wasTransforming = false;
+
+function cloneLayer(L){ return L ? JSON.parse(JSON.stringify(L)) : null; }
+function ensureAnimLayer(s) {
+  s.react2 = s.react2 || {};
+  const anim = s.react2.anim || (s.react2.anim = { layers: [] });
+  let L = anim.layers[0];
+  if (!L) anim.layers[0] = L = { enabled: true, type: 'none', speed: 1 };
+  return L;
+}
+function selectionCenter(){
+  const bb = selectionBBoxWorld();
+  return bb ? { x:(bb.minx+bb.maxx)/2, y:(bb.miny+bb.maxy)/2 } : null;
+}
+
+subscribe(() => {
+  const transforming = !!state._transformActive;
+  if (transforming && !_wasTransforming) {
+    _animStash.clear();
+    const sel = Array.from(state.selection || []);
+    for (const s of sel) {
+      const L = getAnimLayer(s);
+      _animStash.set(s, cloneLayer(L));       
+      if (L) { L.enabled = false; L.type = 'none'; }
+    }
+    scheduleRender(); 
+  }
+
+  if (!transforming && _wasTransforming) {
+    const center = selectionCenter(); 
+    for (const [s, snapshot] of _animStash) {
+      if (!snapshot) continue;      
+      const L = ensureAnimLayer(s);
+      Object.assign(L, snapshot);         
+      L.enabled = snapshot.type && snapshot.type !== 'none';
+      if (center && (snapshot.pivot || snapshot.groupId)) {
+        L.pivot = { x: center.x, y: center.y };
+      }
+    }
+    _animStash.clear();
+    markDirty();
+    scheduleRender();
+  }
+
+  _wasTransforming = transforming;
+});
+
   subscribe(updateHud); window.addEventListener('resize', updateHud); setTimeout(updateHud,0);
 
   return { updatePosePanel: updateHud, updatePoseHud: updateHud };
