@@ -3,7 +3,7 @@ import { state, subscribe, scheduleRender, loadAutosave } from './state.js';
 import { makeCamera, renormalizeIfNeeded, whenRenormalized, visibleWorldRect } from './camera.js';
 import { render } from './renderer.js';
 import { createTool } from './tools/index.js';
-import { initUI, getRecentColors, setRecentColors } from './ui.js';
+import { initUI, getRecentColors, setRecentColors, clearRecentColors } from './ui.js';
 import { grid, applyWorkerIndex, rebuildIndex, clearIndex } from './spatial_index.js';
 import { saveViewportPNG } from './export.js';
 import { removeStroke } from './strokes.js';
@@ -18,6 +18,13 @@ import {
 } from './docs.js';
 
 const DPR_CAP = 2.5;
+
+const DEFAULT_UI = {
+  tool: 'draw',
+  brush: 'pen',
+  settings: { color: '#88ccff', size: 6, opacity: 1, fill: false },
+  palette: [] // empty “Recent” list
+};
 
 const canvas = document.getElementById('c');
 const overlay = document.getElementById('navOverlay');
@@ -63,7 +70,20 @@ function initGalleryFromDocs() {
     onCreateNew() {
       const created = createDoc('Untitled');
       const d = (typeof created === 'string') ? getDoc(created) : created;
-      openDoc(d || created); 
+      try {
+        const doc = d || created;
+        if (doc) {
+          doc.data = doc.data || {};
+          doc.data.ui = { ...DEFAULT_UI };
+          // also ensure a predictable fresh background for new docs
+          doc.data.background = { color: '#0f1115', alpha: 1 };
+          saveDocFull(doc);
+        }
+      } catch {}
+      // Clear “Recent colors” in local storage so UI shows a fresh list
+      clearRecentColors();
+      setRecentColors(DEFAULT_UI.palette);
+      openDoc(d || created);
     },
     afterReorder(items) {
 

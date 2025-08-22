@@ -671,3 +671,6 @@ export function setRecentColors(arr){
     if (norm.length) saveRecent(norm);
   } catch {}
 }
+export function clearRecentColors(){
+  try { localStorage.removeItem(LS_RECENT_KEY); } catch {}
+}
