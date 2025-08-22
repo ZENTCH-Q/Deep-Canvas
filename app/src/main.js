@@ -3,7 +3,7 @@ import { state, subscribe, scheduleRender, loadAutosave } from './state.js';
 import { makeCamera, renormalizeIfNeeded, whenRenormalized, visibleWorldRect } from './camera.js';
 import { render } from './renderer.js';
 import { createTool } from './tools/index.js';
-import { initUI } from './ui.js';
+import { initUI, getRecentColors, setRecentColors } from './ui.js';
 import { grid, applyWorkerIndex, rebuildIndex, clearIndex } from './spatial_index.js';
 import { saveViewportPNG } from './export.js';
 import { removeStroke } from './strokes.js';
@@ -130,7 +130,13 @@ function extractDocDataFromState() {
     version: 2,
     strokes: state.strokes.map(prepareStrokeForSave),
     background: state.background ? { color: state.background.color, alpha: state.background.alpha } : { color:'#0f1115', alpha:1 },
-    meta: { modified: Date.now() }
+    meta: { modified: Date.now() },
+    ui: {
+      tool: state.tool,
+      brush: state.brush,
+      settings: { ...state.settings },          // { color, size, opacity, fill }
+      palette: getRecentColors()                // recent colors swatch list
+    }
   };
 }
 
@@ -693,6 +699,22 @@ export function openDoc(docOrId) {
     state.background = { color: payload.background.color, alpha: Number.isFinite(a) ? Math.max(0, Math.min(1, a)) : 1 };
   } else {
     state.background = { color: '#0f1115', alpha: 1 };
+  }
+
+  if (payload.ui) {
+    const u = payload.ui;
+    if (u.palette && Array.isArray(u.palette)) {
+      setRecentColors(u.palette);
+    }
+    if (u.settings && typeof u.settings === 'object') {
+      state.settings = { ...state.settings, ...u.settings };
+    }
+    if (u.brush) state.brush = u.brush;
+    if (u.tool) setTool(u.tool);
+    try {
+      const qb = document.getElementById('quickBrush');
+      if (qb) qb.value = state.brush;
+    } catch {}
   }
 
   rebuildIndex(grid, state.strokes);

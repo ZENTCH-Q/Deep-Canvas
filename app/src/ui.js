@@ -661,3 +661,13 @@ subscribe(() => {
   return { updatePosePanel: updateHud, updatePoseHud: updateHud };
 }
 
+export function getRecentColors(){
+  try { return loadRecent().slice(); } catch { return []; }
+}
+export function setRecentColors(arr){
+  try {
+    if (!Array.isArray(arr)) return;
+    const norm = dedupeKeepOrder(arr.map(toHex6).filter(Boolean));
+    if (norm.length) saveRecent(norm);
+  } catch {}
+}
