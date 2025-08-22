@@ -251,22 +251,60 @@ new ResizeObserver(() => fitDockToCanvas()).observe(document.getElementById('can
 window.addEventListener('resize', fitDockToCanvas);
 window.addEventListener('orientationchange', fitDockToCanvas);
 
-// fix(pointer-offset): normalize to canvas + world coordinates on every event
+// fix(touch): robust pointer normalization + pointer capture
 function normalizePointerEvent(e) {
   const r = canvas.getBoundingClientRect();
-  const canvasX = e.clientX - r.left;
-  const canvasY = e.clientY - r.top;
-  e.canvasX = canvasX;     // CSS pixels inside the canvas box
-  e.canvasY = canvasY;
-  e.worldX  = (canvasX - camera.tx) / camera.scale;  // world-space point
-  e.worldY  = (canvasY - camera.ty) / camera.scale;
+  const cx = e.clientX - r.left;
+  const cy = e.clientY - r.top;
+  e.canvasX = cx;
+  e.canvasY = cy;
+  e.worldX  = (cx - camera.tx) / camera.scale;
+  e.worldY  = (cy - camera.ty) / camera.scale;
   return e;
 }
-canvas.addEventListener('pointerdown',  e => { normalizePointerEvent(e); panOverrideTool.onPointerDown?.(e);  currentTool.onPointerDown?.(e);  });
-canvas.addEventListener('pointermove',  e => { normalizePointerEvent(e); panOverrideTool.onPointerMove?.(e);  currentTool.onPointerMove?.(e);  });
-canvas.addEventListener('pointerup',    e => { normalizePointerEvent(e); panOverrideTool.onPointerUp?.(e);    currentTool.onPointerUp?.(e);    });
-canvas.addEventListener('pointercancel',e => { normalizePointerEvent(e); panOverrideTool.cancel?.(e);         currentTool.cancel?.(e);         });
-canvas.addEventListener('lostpointercapture', e => { normalizePointerEvent(e); panOverrideTool.cancel?.(e); currentTool.cancel?.(e); });
+
+// Only let the pan-override tool handle mouse (and the explicit Pan tool).
+// Touch/pen should default to drawing unless the user selected the Pan tool.
+function shouldSendToPanOverride(e) {
+  if (state.tool === 'pan') return true;         // user explicitly chose Pan
+  return e.pointerType === 'mouse';              // keep mouse middle-drag etc
+}
+
+canvas.addEventListener('pointerdown',  e => {
+  normalizePointerEvent(e);
+  if (e.pointerType !== 'mouse') e.preventDefault(); // block browser touch behavior just in case
+  try { canvas.setPointerCapture(e.pointerId); } catch {}
+  if (shouldSendToPanOverride(e)) panOverrideTool.onPointerDown?.(e);
+  currentTool.onPointerDown?.(e);
+});
+
+canvas.addEventListener('pointermove',  e => {
+  normalizePointerEvent(e);
+  if (e.pointerType !== 'mouse') e.preventDefault();
+  if (shouldSendToPanOverride(e)) panOverrideTool.onPointerMove?.(e);
+  currentTool.onPointerMove?.(e);
+});
+
+canvas.addEventListener('pointerup',    e => {
+  normalizePointerEvent(e);
+  if (e.pointerType !== 'mouse') e.preventDefault();
+  if (shouldSendToPanOverride(e)) panOverrideTool.onPointerUp?.(e);
+  currentTool.onPointerUp?.(e);
+  try { canvas.releasePointerCapture(e.pointerId); } catch {}
+});
+
+canvas.addEventListener('pointercancel', e => {
+  normalizePointerEvent(e);
+  if (shouldSendToPanOverride(e)) panOverrideTool.cancel?.(e);
+  currentTool.cancel?.(e);
+  try { canvas.releasePointerCapture(e.pointerId); } catch {}
+});
+
+canvas.addEventListener('lostpointercapture', e => {
+  normalizePointerEvent(e);
+  panOverrideTool.cancel?.(e);
+  currentTool.cancel?.(e);
+});
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
 let wheelAccum = 0, wheelPoint = { x:0, y:0 }, wheelRAF = 0;

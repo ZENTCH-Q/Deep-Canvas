@@ -36,6 +36,8 @@
 
   #canvasContainer{position:relative;width:100vw;height:100vh}
   #c,#navOverlay{display:block;width:100vw;height:100vh}
+  /* fix(touch): allow pointer events to flow to the app (no browser panning/zooming) */
+  #c, #navOverlay { touch-action: none; }
   #c, #navOverlay { touch-action: none; }
   #c{cursor:crosshair} #c.panning,#c.dragging{cursor:grab}
   #navOverlay{position:absolute;left:0;top:0;pointer-events:none;display:none;will-change:transform}
