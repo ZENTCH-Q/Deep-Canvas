@@ -10,6 +10,7 @@ import { removeStroke } from './strokes.js';
 import { PanTool } from './tools/pan.js';
 import { attachHistory } from './history.js';
 import { initGalleryView, showGallery, hideGallery } from './gallery.js';
+document.documentElement.setAttribute('data-theme', 'dark');
 
 import {
   listDocs, getDoc, createDoc,
@@ -250,11 +251,22 @@ new ResizeObserver(() => fitDockToCanvas()).observe(document.getElementById('can
 window.addEventListener('resize', fitDockToCanvas);
 window.addEventListener('orientationchange', fitDockToCanvas);
 
-canvas.addEventListener('pointerdown', e => { panOverrideTool.onPointerDown?.(e); currentTool.onPointerDown?.(e); });
-canvas.addEventListener('pointermove', e => { panOverrideTool.onPointerMove?.(e); currentTool.onPointerMove?.(e); });
-canvas.addEventListener('pointerup',    e => { panOverrideTool.onPointerUp?.(e);   currentTool.onPointerUp?.(e); });
-canvas.addEventListener('pointercancel',e => { panOverrideTool.cancel?.(e);        currentTool.cancel?.(e); });
-canvas.addEventListener('lostpointercapture', e => { panOverrideTool.cancel?.(e); currentTool.cancel?.(e); });
+// fix(pointer-offset): normalize to canvas + world coordinates on every event
+function normalizePointerEvent(e) {
+  const r = canvas.getBoundingClientRect();
+  const canvasX = e.clientX - r.left;
+  const canvasY = e.clientY - r.top;
+  e.canvasX = canvasX;     // CSS pixels inside the canvas box
+  e.canvasY = canvasY;
+  e.worldX  = (canvasX - camera.tx) / camera.scale;  // world-space point
+  e.worldY  = (canvasY - camera.ty) / camera.scale;
+  return e;
+}
+canvas.addEventListener('pointerdown',  e => { normalizePointerEvent(e); panOverrideTool.onPointerDown?.(e);  currentTool.onPointerDown?.(e);  });
+canvas.addEventListener('pointermove',  e => { normalizePointerEvent(e); panOverrideTool.onPointerMove?.(e);  currentTool.onPointerMove?.(e);  });
+canvas.addEventListener('pointerup',    e => { normalizePointerEvent(e); panOverrideTool.onPointerUp?.(e);    currentTool.onPointerUp?.(e);    });
+canvas.addEventListener('pointercancel',e => { normalizePointerEvent(e); panOverrideTool.cancel?.(e);         currentTool.cancel?.(e);         });
+canvas.addEventListener('lostpointercapture', e => { normalizePointerEvent(e); panOverrideTool.cancel?.(e); currentTool.cancel?.(e); });
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
 let wheelAccum = 0, wheelPoint = { x:0, y:0 }, wheelRAF = 0;

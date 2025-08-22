@@ -23,7 +23,7 @@
     background:var(--bg); color:var(--text);
   }
   @media (prefers-color-scheme:light){
-    body{
+    :root:not([data-theme]) body{
       --bg:#f7f8fb; --glass:#ffffffcc; --panel:#fff; --panel-2:#f4f6f8;
       --border:#dfe3e8; --text:#121619; --muted:#5b6b79; --accent:#007aff;
       --sel-stroke:#7b8796; --sel-fill:rgba(123,135,150,.10);
@@ -36,6 +36,7 @@
 
   #canvasContainer{position:relative;width:100vw;height:100vh}
   #c,#navOverlay{display:block;width:100vw;height:100vh}
+  #c, #navOverlay { touch-action: none; }
   #c{cursor:crosshair} #c.panning,#c.dragging{cursor:grab}
   #navOverlay{position:absolute;left:0;top:0;pointer-events:none;display:none;will-change:transform}
 
