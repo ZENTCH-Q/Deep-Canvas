@@ -428,6 +428,18 @@ window.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase()==='y' || (e.shiftKey && e.key.toLowerCase()==='z'))) {
     e.preventDefault(); state.history?.redo(); scheduleDocAutosave(); return;
   }
+  if (e.key === 'Escape' || ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'a')) {
+    if (state.selection?.size) {
+      e.preventDefault();
+      try { state.selection.clear(); } catch {}
+      state._marquee = null;
+      state._transformActive = false;
+      state._hoverHandle = null;
+      state._activeHandle = null;
+      scheduleRender();
+      return;
+    }
+  }
   if (e.key===' ') canvas.classList.add('panning');
 });
 window.addEventListener('keyup', (e) => { if (e.key===' ') canvas.classList.remove('panning'); });

@@ -12,7 +12,10 @@ const MOVE_TOL_SQ = 4 * 4;
 function rectFrom(a, b){
   return { minx: Math.min(a.x,b.x), miny: Math.min(a.y,b.y), maxx: Math.max(a.x,b.x), maxy: Math.max(a.y,b.y) };
 }
-function bboxIntersects(a, b){ return !(a.maxx < b.minx || a.minx > b.maxx || a.maxy < b.miny || a.miny > b.maxy); }
+function bboxContains(outer, inner){
+  return outer.minx <= inner.minx && outer.miny <= inner.miny &&
+         outer.maxx >= inner.maxx && outer.maxy >= inner.maxy;
+}
 
 function selectionBBoxWorld(state){
   const bake = globalState._bake;
@@ -151,6 +154,7 @@ export class SelectTool {
     this.downWorld  = null;
     this.dragging   = false;
     this.additive   = false;
+    this.strictContain = false;
     this.mode = null;   
     this.handle = null;    
     this.startBBox = null;
@@ -174,13 +178,15 @@ export class SelectTool {
     scheduleRender();
   }
 
-  _selectMarquee(rect, additive){
+  _selectMarquee(rect, additive, contain=false){
     const cands = query(grid, rect);
     const picked = new Set();
     for (const s of cands){
       const pad = (s.w || 0) * 1.0;
       const bb = { minx: s.bbox.minx - pad, miny: s.bbox.miny - pad, maxx: s.bbox.maxx + pad, maxy: s.bbox.maxy + pad };
-      if (bboxIntersects(bb, rect)) picked.add(s);
+      if (contain ? bboxContains(rect, bb) : bboxIntersects(bb, rect)) {
+        picked.add(s);
+      }
     }
     this._applySelection(picked, additive);
   }
@@ -193,6 +199,7 @@ export class SelectTool {
     this.downWorld  = this.camera.screenToWorld(this.downScreen);
     this.dragging = false;
     this.additive = !!e.shiftKey;
+    this.strictContain = !!e.altKey;
     if (this.state.selection && this.state.selection.size){
       const bb = selectionBBoxWorld(this.state);
       if (bb){
@@ -346,7 +353,11 @@ export class SelectTool {
         }
       } else {
         const rect = this.state._marquee;
-        if (rect) this._selectMarquee(rect, this.additive);
+        if (rect) {
+          // Alt/Option during release or at drag start => inside-only
+          const contain = !!e.altKey || this.strictContain;
+          this._selectMarquee(rect, this.additive, contain);
+        }
       }
     }
 
@@ -355,6 +366,7 @@ export class SelectTool {
     this.mode = null; this.handle = null; this.startBBox = null;
     this.downScreen = null; this.downWorld = null; this.dragging = false; this.additive = false;
     this._rotPivot = null; this._rotAngle0 = 0;
+    this.strictContain = false;
   }
 
   cancel(){

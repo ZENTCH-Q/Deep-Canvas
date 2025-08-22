@@ -4,6 +4,60 @@ import { ensurePathChunks } from './path_chunks.js';
 
 const STRIDE = 3;
 
+function minDistWorld_Path(s, p){
+  // Fast, robust: full scan (we only call this for a tiny set of candidates).
+  let best = Infinity;
+  if (s.n != null && s.pts && typeof s.pts.BYTES_PER_ELEMENT === 'number'){
+    const n = Math.max(0, s.n - STRIDE);
+    let ax = s.pts[0], ay = s.pts[1];
+    for (let i = STRIDE; i <= n; i += STRIDE){
+      const bx = s.pts[i], by = s.pts[i+1];
+      const d2 = distSqPointSeg(p, [ax,ay], [bx,by]);
+      if (d2 < best) best = d2;
+      ax = bx; ay = by;
+    }
+  } else if (Array.isArray(s.pts) && s.pts.length){
+    for (let i = 1; i < s.pts.length; i++){
+      const d2 = distSqPointSeg(p, s.pts[i-1], s.pts[i]);
+      if (d2 < best) best = d2;
+    }
+  }
+  return Number.isFinite(best) ? Math.sqrt(best) : Infinity;
+}
+
+function minDistWorld_RectOutline(s, p){
+  const minx=Math.min(s.start.x,s.end.x), maxx=Math.max(s.start.x,s.end.x);
+  const miny=Math.min(s.start.y,s.end.y), maxy=Math.max(s.start.y,s.end.y);
+  const t = (s.w || 1)*0.5;
+  const insideX = (p.x>=minx && p.x<=maxx);
+  const insideY = (p.y>=miny && p.y<=maxy);
+  if (insideX && insideY){
+    // distance to nearest edge from inside, minus half thickness
+    const dEdge = Math.min(p.x-minx, maxx-p.x, p.y-miny, maxy-p.y);
+    return Math.max(0, dEdge - t);
+  }
+  // Outside: distance to rectangle (corner-aware), minus half thickness
+  const dx = (p.x<minx)? (minx-p.x) : (p.x>maxx)? (p.x-maxx) : 0;
+  const dy = (p.y<miny)? (miny-p.y) : (p.y>maxy)? (p.y-maxy) : 0;
+  return Math.max(0, Math.hypot(dx,dy) - t);
+}
+
+function minDistWorld_Ellipse(s, p){
+  // Approximate but stable for selection ranking.
+  const cx=(s.start.x+s.end.x)/2, cy=(s.start.y+s.end.y)/2;
+  const rx=Math.max(1e-6, Math.abs(s.end.x-s.start.x)/2);
+  const ry=Math.max(1e-6, Math.abs(s.end.y-s.start.y)/2);
+  const t = (s.w||1)*0.5;
+  const qx=(p.x-cx)/rx, qy=(p.y-cy)/ry;
+  const rho = Math.hypot(qx,qy);              // 1.0 on the ellipse
+  const rEff = Math.max(rx, ry);              // project back to world units
+  if (s.fill){
+    return (rho<=1) ? 0 : (rho-1)*rEff;
+  }
+  return Math.max(0, Math.abs(rho-1)*rEff - t);
+}
+
+
 function hitPathTypedWithRange(s, p, r, i0, i1){
   const th2 = Math.max(r, (s.w || 1) * 0.6) ** 2;
   if (s.n < 6) {
@@ -126,4 +180,37 @@ export function isHitConsideringBake(stroke, pWorld, rWorld, bake, camera){
     if (stroke.shape==='ellipse') return hitEllipse(stroke, p, r, camera);
   }
   return false;
+}
+
+export function distancePxConsideringBake(stroke, pWorld, camera, bake){
+  let p = pWorld;
+  // If the stroke is currently being baked, compare in its source space,
+  // then scale back to screen px with camera.scale * bake.s.
+  const pxPerWorld =
+    (bake?.active && stroke && stroke._baked === false)
+      ? camera.scale * bake.s
+      : camera.scale;
+  if (bake?.active && stroke && stroke._baked === false){
+    const is = 1 / Math.max(1e-20, bake.s);
+    p = { x: pWorld.x * is - bake.tx * is, y: pWorld.y * is - bake.ty * is };
+  }
+
+  let dWorld = Infinity;
+  if (stroke.kind === 'path'){
+    ensurePathChunks(stroke);
+    const dCenter = minDistWorld_Path(stroke, p);
+    const t = (stroke.w||1)*0.5;
+    dWorld = Math.max(0, dCenter - t);
+  } else if (stroke.kind === 'shape'){
+    if (stroke.shape === 'line'){
+      const dCenter = Math.sqrt(distSqPointSeg(p, stroke.start, stroke.end));
+      const t = (stroke.w||1)*0.5;
+      dWorld = Math.max(0, dCenter - t);
+    } else if (stroke.shape === 'rect'){
+      dWorld = minDistWorld_RectOutline(stroke, p);
+    } else if (stroke.shape === 'ellipse'){
+      dWorld = minDistWorld_Ellipse(stroke, p);
+    }
+  }
+  return Math.max(0, dWorld * pxPerWorld);
 }

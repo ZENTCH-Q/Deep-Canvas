@@ -9,7 +9,7 @@ export function worldTol(camera, px = 0.9){
 
 /** Consistent pick radius: max(base px radius, fraction of brush size). */
 export function pickRadius(camera, state, basePx = 12, sizeFactor = 0.9){
-  const baseR   = basePx / Math.max(EPS, camera.scale);
+  const baseR   = (basePx + 4) / Math.max(EPS, camera.scale); // effectively 16px default
   const size    = (state?.settings?.size ?? 6) / Math.max(EPS, camera.scale);
   return Math.max(baseR, size * sizeFactor);
 }
