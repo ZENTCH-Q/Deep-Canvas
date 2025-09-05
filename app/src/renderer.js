@@ -238,8 +238,7 @@ function hslShiftHex(hex, {ds=0, dl=0}){
 }
 
 function applyStyleLayers(ctx, camera, s, _state, t, baseW, dpr = 1){
-  // Don’t animate style during navigation to avoid “shape drift”
-  if (_state?._navActive) return;
+
   const layers = s?.react2?.style?.layers;
   if (!layers || !layers.length) return;
 
@@ -387,7 +386,7 @@ function drawShapeWorld(ctx, s, camera) {
   if (s.shape === 'rect') {
     let x = Math.min(a.x, b.x), y = Math.min(a.y, b.y);
     let w = Math.abs(b.x - a.x), h = Math.abs(b.y - a.y);
-    const minWorld = 0 / Math.max(1e-8, camera.scale);
+    const minWorld = 0.5 / Math.max(1e-8, camera.scale);
     const cx = x + w / 2, cy = y + h / 2;
     if (w < minWorld) { w = minWorld; x = cx - w / 2; }
     if (h < minWorld) { h = minWorld; y = cy - h / 2; }
@@ -396,7 +395,7 @@ function drawShapeWorld(ctx, s, camera) {
   }
   if (s.shape === 'ellipse') {
     const cx = (a.x + b.x) / 2, cy = (a.y + b.y) / 2;
-    const minWorld = 0 / Math.max(1e-8, camera.scale);
+    const minWorld = 0.5 / Math.max(1e-8, camera.scale);
     const rx = Math.max(minWorld, Math.abs(b.x - a.x) / 2);
     const ry = Math.max(minWorld, Math.abs(b.y - a.y) / 2);
     ctx.beginPath(); ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
@@ -622,13 +621,13 @@ export function render(state, camera, ctx, canvasLike, opts = {}) {
     const a = s1 / Math.max(1e-20, s0);
     const bx = tx1 - a * tx0;
     const by = ty1 - a * ty0;
-    const isZooming = Math.abs(a - 1) > 1e-3;
-    const sbx = bx;
-    const sby = by;
+    if (!state._navAllowLive) {
+      const sbx = bx, sby = by;
 
-    ctx.setTransform(dpr * a, 0, 0, dpr * a, dpr * sbx, dpr * sby);
-    ctx.drawImage(state._navBmp, 0, 0);
-    return { visible: 0, tiles: grid.map.size, complete: true };
+      ctx.setTransform(dpr * a, 0, 0, dpr * a, dpr * sbx, dpr * sby);
+      ctx.drawImage(state._navBmp, 0, 0);
+      return { visible: 0, tiles: grid.map.size, complete: true };
+    }
   }
   if (!skipSnapshotPath && state._navActive && state._navCam0 && (state._navBuf || state._navBmp)) {
     const s0 = state._navCam0.s, tx0 = state._navCam0.tx, ty0 = state._navCam0.ty;
@@ -642,17 +641,19 @@ export function render(state, camera, ctx, canvasLike, opts = {}) {
     const sbx = isZooming ? bx : (Math.round(dpr * bx) / dpr);
     const sby = isZooming ? by : (Math.round(dpr * by) / dpr);
 
-    const prevSmooth = ctx.imageSmoothingEnabled;
-    const prevQual = ctx.imageSmoothingQuality;
-    ctx.imageSmoothingEnabled = true;
-    try { ctx.imageSmoothingQuality = 'low'; } catch {}
+    if (!state._navAllowLive) {
+      const prevSmooth = ctx.imageSmoothingEnabled;
+      const prevQual = ctx.imageSmoothingQuality;
+      ctx.imageSmoothingEnabled = true;
+      try { ctx.imageSmoothingQuality = 'low'; } catch {}
 
-    ctx.setTransform(dpr * a, 0, 0, dpr * a, dpr * sbx, dpr * sby);
-    ctx.drawImage(src, 0, 0);
+      ctx.setTransform(dpr * a, 0, 0, dpr * a, dpr * sbx, dpr * sby);
+      ctx.drawImage(src, 0, 0);
 
-    ctx.imageSmoothingEnabled = prevSmooth;
-    try { ctx.imageSmoothingQuality = prevQual; } catch {}
-    return { visible: 0, tiles: grid.map.size, complete: true };
+      ctx.imageSmoothingEnabled = prevSmooth;
+      try { ctx.imageSmoothingQuality = prevQual; } catch {}
+      return { visible: 0, tiles: grid.map.size, complete: true };
+    }
   }
 
   ctx.setTransform(
@@ -692,7 +693,8 @@ export function render(state, camera, ctx, canvasLike, opts = {}) {
   const tiles = grid.map.size;
 
   const strokes = state.strokes;
-  const tNow = performance.now() / 1000;
+  // Use app-driven animation clock so play/pause is consistent.
+  const tNow = (state?._anim?.t ?? (performance.now() / 1000));
 
   for (let i = 0; i < strokes.length; i++) {
     const s0 = strokes[i];
@@ -720,13 +722,7 @@ export function render(state, camera, ctx, canvasLike, opts = {}) {
     const baseW = Math.max(0.75 / Math.max(1, camera.scale), (s.w || 1));
     ctx.lineWidth = baseW;
     if (unbaked) { ctx.save(); ctx.transform(bake.s, 0, 0, bake.s, bake.tx, bake.ty); }
-    const interacting = !!(
-      state._transformActive ||
-      state._drawingActive  ||
-      state._erasingActive  ||
-      state._navActive    
-    );
-    const axf = interacting ? null : animXfFromLayers(s, state, tNow);
+    const axf = animXfFromLayers(s, state, tNow);
     let animApplied = false;
     if (axf) {
       let cx, cy;

@@ -21,10 +21,12 @@ export const state = {
   _navBufCtx: null,
   _navBmp: null,
   _navCam0: null,
+  _navAllowLive: false,
   _marquee: null,
   _transformActive: false,
   clipboard: null,
   _audio: { t: 0, playing: false },
+  _anim: { t: 0, playing: true },
 };
 
 const subs = new Set();

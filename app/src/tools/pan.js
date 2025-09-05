@@ -14,14 +14,22 @@ export class PanTool {
     this.camera  = camera;
     this.state   = state;
 
-    this.drag = false; this.last = { x:0, y:0 }; this.activeButton = null;
+    this.drag = false; 
+    this.last = { x:0, y:0 }; 
+    this.activeButton = null;
+
     this.onRenormStart = onRenormStart || (()=>{});
     this.onRenormEnd   = onRenormEnd   || (()=>{});
+
     this._idleTimer = 0;
     this._lastRefresh = 0;
     this._camBase = { tx:0, ty:0 }; 
     this._lastMoveT = 0;
-    this._vx = 0; this._vy = 0;
+    this._vx = 0; 
+    this._vy = 0;
+
+    // drive overlay animation while panning
+    this._animRAF = 0;
   }
 
   _showOverlaySnapshot(){
@@ -57,6 +65,22 @@ export class PanTool {
     this.overlay.style.transform = 'translate3d(0px,0px,0)';
   }
 
+  _startOverlayAnim(){
+    if (!this.overlay) return;
+    if (this._animRAF) cancelAnimationFrame(this._animRAF);
+    const loop = () => {
+      if (!this.drag) { this._animRAF = 0; return; }
+      // repaint at full rate so animated strokes keep playing
+      this._repaintOverlayNow();
+      this._animRAF = requestAnimationFrame(loop);
+    };
+    this._animRAF = requestAnimationFrame(loop);
+  }
+  _stopOverlayAnim(){
+    if (this._animRAF) cancelAnimationFrame(this._animRAF);
+    this._animRAF = 0;
+  }
+
   _debouncedHeavyWork(){
     const s = this.state;
     const started = renormalizeIfNeeded(this.camera, s.strokes, { budgetMs: 4 }, s);
@@ -79,6 +103,7 @@ export class PanTool {
     this.canvas.setPointerCapture(e.pointerId);
 
     this._showOverlaySnapshot();
+    this._startOverlayAnim();   // start live overlay animation
     this._camBase.tx = this.camera.tx;
     this._camBase.ty = this.camera.ty;
     this._lastRefresh = performance.now();
@@ -118,7 +143,7 @@ export class PanTool {
     }
 
     const speed = Math.min(2.5, Math.hypot(this._vx, this._vy)); 
-    const dynPeriod = Math.max(60, PAN_REFRESH_MS - speed*20);  // repaint overlay less aggressively while moving fast
+    const dynPeriod = Math.max(60, PAN_REFRESH_MS - speed*20);
     const now = performance.now();
     if (now - this._lastRefresh >= dynPeriod) {
       this._repaintOverlayNow();
@@ -137,6 +162,8 @@ export class PanTool {
     this.activeButton = null;
     this.canvas.classList.remove('dragging');
 
+    this._stopOverlayAnim();   // stop overlay RAF
+
     clearTimeout(this._idleTimer);
     this._debouncedHeavyWork(); 
 
@@ -149,6 +176,7 @@ export class PanTool {
     this.activeButton = null;
     this.canvas.classList.remove('dragging');
 
+    this._stopOverlayAnim();   // stop overlay RAF
     clearTimeout(this._idleTimer);
     this._hideOverlay();
   }

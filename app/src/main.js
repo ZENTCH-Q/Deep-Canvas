@@ -369,6 +369,7 @@ function ensureNavSnapshot() {
     state._navActive = true;
     state._navPrimed = !!state._navBuf;
     state._navCam0 = { s: camera.scale, tx: camera.tx, ty: camera.ty };
+    state._navAllowLive = true;  // allow live rendering (animations) during nav
     lastNavRefresh = performance.now();
     scheduleRender();
 
@@ -389,6 +390,7 @@ function endNavSnapshot(){
   state._navBufCtx = null;
   state._navCam0 = null;
   lastNavRefresh = 0;
+  state._navAllowLive = false;
 }
 function refreshNavBufferNow(){
   if (!state._navBuf || !state._navBufCtx) return;
@@ -411,7 +413,7 @@ function applyWheelZoom(){
   if (wheelAccum === 0) return;
 
   const r = canvas.getBoundingClientRect();
-  const p = { x: wheelPoint.x - r.left, y: r.top ? (wheelPoint.y - r.top) : wheelPoint.y };
+  const p = { x: wheelPoint.x - r.left, y: wheelPoint.y - r.top };
   const zoomFactor = Math.pow(1.1, -wheelAccum / 120);
   wheelAccum = 0;
 
@@ -453,6 +455,16 @@ window.addEventListener('keydown', (e) => {
   }
   if ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase()==='y' || (e.shiftKey && e.key.toLowerCase()==='z'))) {
     e.preventDefault(); state.history?.redo(); scheduleDocAutosave(); return;
+  }
+  if (e.key === ' ' && !e.repeat) {
+    const tag = (e.target && e.target.tagName) ? e.target.tagName.toLowerCase() : '';
+    const isTyping = tag === 'input' || tag === 'textarea' || (e.target && e.target.isContentEditable);
+    if (!isTyping) {
+      e.preventDefault();
+      state._anim = state._anim || { t: 0, playing: true };
+      state._anim.playing = !state._anim.playing;
+      scheduleRender();
+    }
   }
   if (e.key === 'Escape' || ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'a')) {
     if (state.selection?.size) {
@@ -593,6 +605,7 @@ subscribe(() => {
       `strokes:${state.strokes.length} | tool:${state.tool} | brush:${state.brush} | ` +
       `scale:${camera.scale.toExponential(2)} | offset:(${camera.tx|0},${camera.ty|0}) | ` +
       `tiles:${stats.tiles} | vis:${stats.visible}` +
+      ` | anim:${state._anim?.playing ? '▶' : '⏸'}` +
       `${state._freezing ? ' | renorm:freeze' : ''}${state._navActive ? ' | nav:live' : ''}`;
   }
   if (currentDocId) scheduleDocAutosave();
@@ -767,6 +780,13 @@ function needsAnimFrame(st){
   return false;
 }
 (function tick(){
-  if (needsAnimFrame(state)) scheduleRender();
+  tick._last = tick._last || performance.now();
+  const now = performance.now();
+  const dtSec = Math.max(0, Math.min(1/15, (now - tick._last) / 1000)); // clamp dt to avoid big jumps
+  tick._last = now;
+  if (state._anim?.playing) {
+    state._anim.t = (state._anim.t || 0) + dtSec;
+  }
+  if (needsAnimFrame(state) || state._anim?.playing) scheduleRender();
   requestAnimationFrame(tick);
 })();
