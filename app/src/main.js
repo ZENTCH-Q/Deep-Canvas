@@ -494,6 +494,7 @@ function applyCameraFromURL(){
   const ty = parseFloat(get('ty'));
   if (Number.isFinite(s) && Number.isFinite(tx) && Number.isFinite(ty)) {
     camera.scale = s; camera.tx = tx; camera.ty = ty;
+    camera.setHome(s, tx, ty);
     scheduleRender();
   }
 }
@@ -751,7 +752,7 @@ window.addEventListener('resize', hideCtxMenu);
 window.addEventListener('scroll', hideCtxMenu, true);
 
 ctxResetView?.addEventListener('click', () => {
-  camera.scale = 1.25; camera.tx = 0; camera.ty = 0;
+  camera.resetToHome();
   hideCtxMenu();
   scheduleRender();
 });
@@ -843,6 +844,7 @@ export function openDoc(docOrId) {
   } else {
     camera.scale = 1.25; camera.tx = 0; camera.ty = 0;
   }
+  camera.setHome(camera.scale, camera.tx, camera.ty);
 
   showCanvasView();
   scheduleRender();

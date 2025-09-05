@@ -2,6 +2,17 @@
 export function makeCamera(scale = 1, tx = 0, ty = 0){
   return {
     scale, tx, ty,
+    // --- home/original view -----------------------------
+    _home: { s: scale, tx, ty },
+    setHome(s = this.scale, tx = this.tx, ty = this.ty) {
+      this._home = { s, tx, ty };
+    },
+    resetToHome() {
+      const h = this._home || { s: 1, tx: 0, ty: 0 };
+      this.scale = Number.isFinite(h.s)  ? h.s  : 1;
+      this.tx    = Number.isFinite(h.tx) ? h.tx : 0;
+      this.ty    = Number.isFinite(h.ty) ? h.ty : 0;
+    },
     worldToScreen(p){ return { x: p.x * this.scale + this.tx, y: p.y * this.scale + this.ty }; },
     screenToWorld(p){ return { x: (p.x - this.tx) / this.scale, y: (p.y - this.ty) / this.scale }; },
     zoomAround(screenPt, factor, min=1e-6, max=1e6) {
