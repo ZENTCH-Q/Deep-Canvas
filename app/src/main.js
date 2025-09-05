@@ -565,6 +565,88 @@ function fitDockToCanvas() {
   });
 }
 
+// --- Proximity fade for the tool dock ---------------------------------------
+const DOCK_FADE = {
+  nearPx: 110,       // <= this distance from the dock ⇒ 100% opacity
+  farPx: 260,        // >= this distance from the dock ⇒ minOpacity
+  minOpacity: 0.0,  // how transparent when far
+  idleMs: 1600       // fade after no mouse movement for this long
+};
+
+let _dockFadeRAF = 0;
+let _dockIdleTimer = 0;
+let _lastMouse = { x: -1, y: -1 };
+
+function setDockOpacity(op) {
+  if (!dockEl) return;
+  const clamped = Math.max(DOCK_FADE.minOpacity, Math.min(1, op));
+  dockEl.style.opacity = String(clamped);
+  // Avoid stray clicks when very transparent
+  dockEl.style.pointerEvents = clamped < 0.25 ? 'none' : 'auto';
+}
+
+function distanceFromPointToRect(px, py, r) {
+  const dx = (px < r.left) ? (r.left - px) : (px > r.right ? px - r.right : 0);
+  const dy = (py < r.top)  ? (r.top  - py) : (py > r.bottom ? py - r.bottom : 0);
+  return Math.hypot(dx, dy);
+}
+
+function computeDockOpacity() {
+  if (!dockEl) return;
+  // If on touch / coarse pointer, keep fully visible
+  if (window.matchMedia && window.matchMedia('(any-pointer: coarse)').matches) {
+    setDockOpacity(1);
+    return;
+  }
+  // If dock is hidden (gallery view), keep visible baseline
+  if (dockEl.style.display === 'none') {
+    setDockOpacity(1);
+    return;
+  }
+  const rect = dockEl.getBoundingClientRect();
+  const d = distanceFromPointToRect(_lastMouse.x, _lastMouse.y, rect);
+  let nextOpacity;
+  if (d <= DOCK_FADE.nearPx) {
+    nextOpacity = 1;
+  } else if (d >= DOCK_FADE.farPx) {
+    nextOpacity = DOCK_FADE.minOpacity;
+  } else {
+    // linear interpolate between near (1) and far (minOpacity)
+    const t = (d - DOCK_FADE.nearPx) / (DOCK_FADE.farPx - DOCK_FADE.nearPx);
+    nextOpacity = 1 - t * (1 - DOCK_FADE.minOpacity);
+  }
+  setDockOpacity(nextOpacity);
+}
+
+function scheduleDockOpacityRecalc() {
+  if (_dockFadeRAF) return;
+  _dockFadeRAF = requestAnimationFrame(() => {
+    _dockFadeRAF = 0;
+    computeDockOpacity();
+  });
+}
+
+function initDockProximityFade() {
+  // Ensure a smooth transition even without CSS changes
+  try { dockEl.style.transition = 'opacity 180ms ease'; } catch {}
+  setDockOpacity(1); // start visible
+
+  document.addEventListener('mousemove', (e) => {
+    _lastMouse.x = e.clientX;
+    _lastMouse.y = e.clientY;
+    scheduleDockOpacityRecalc();
+    clearTimeout(_dockIdleTimer);
+    _dockIdleTimer = setTimeout(() => setDockOpacity(DOCK_FADE.minOpacity), DOCK_FADE.idleMs);
+  });
+
+  // Force-visible when user approaches or focuses the dock
+  dockEl?.addEventListener('mouseenter', () => setDockOpacity(1));
+  dockEl?.addEventListener('focusin', () => setDockOpacity(1));
+
+  // Keep visible when window loses focus to avoid surprises
+  window.addEventListener('blur', () => setDockOpacity(1));
+}
+
 
 async function beginFreeze() {
   try {
@@ -622,6 +704,8 @@ initGalleryFromDocs();
 resize();
 scheduleRender();
 showGalleryView();
+
+initDockProximityFade();
 
 const ctxMenu = document.getElementById('ctxMenu');
 const ctxResetView = document.getElementById('ctxResetView');
