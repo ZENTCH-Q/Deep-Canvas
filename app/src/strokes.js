@@ -201,11 +201,13 @@ export function restoreGeometry(s, snap){
   }
   delete s._lodCache;
 }
-
-/**
- * Transform stroke geometry by scale (sx,sy), rotation (theta), and translation (tx,ty)
- * around an origin (ox,oy). Rotation is in radians. Order: scale -> rotate -> translate.
- */
+export function selectForTransform(state, s){
+  if (!state || !s) return;
+  try { state.selection?.clear?.(); } catch {}
+  try { state.selection?.add?.(s); } catch {}
+  state._transformActive = true;   // optional, but nice to keep transform UX alive
+  scheduleRender();
+}
 export function transformStrokeGeom(s, xf){
   const sx = Number.isFinite(xf?.sx) ? xf.sx : 1;
   const sy = Number.isFinite(xf?.sy) ? xf.sy : 1;
@@ -266,6 +268,9 @@ export function transformStrokeGeom(s, xf){
       maxy: Math.max(a.y, b.y),
     };
     if (typeof s.w === 'number') s.w = s.w * kw;
+   if (s.shape === 'text' && typeof s.fontSize === 'number') {
+     s.fontSize = s.fontSize * kw;
+   }
   }
   delete s._lodCache;
   try {

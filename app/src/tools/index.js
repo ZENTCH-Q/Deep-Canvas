@@ -6,13 +6,17 @@ import { DeleteTool } from './delete.js';
 import { LineTool, RectTool, EllipseTool } from './shapes.js';
 import { SelectTool } from './select.js';
 import { PaintTool } from './paint.js';
+import { TextTool } from './text.js';
 
 export function createTool(name, deps){
-  // deps now may include { overlay }
+  if (!deps.state._selectToolSingleton) {
+    deps.state._selectToolSingleton = new SelectTool(deps);
+  }
   switch(name){
-    case 'select': return new SelectTool(deps);
+    case 'select': return deps.state._selectToolSingleton;
     case 'paint': return new PaintTool(deps);
     case 'draw': return new DrawTool(deps);
+    case 'text'  : return new TextTool(deps);
     case 'erase': return new EraseTool(deps);
     case 'delete': return new DeleteTool(deps);
     case 'pan': return new PanTool(deps);

@@ -3,6 +3,7 @@
 import { addShape, updateShapeEnd } from '../strokes.js';
 import { scheduleRender, setDeferIndex } from '../state.js';
 import { applyBrushStyle, strokeCommonSetup } from '../renderer.js';
+import { hitSelectionUI } from './select.js';
 
 import { DPR_CAP, moveTol } from '../utils/common.js';
 
@@ -11,7 +12,18 @@ function styleFromState(state, worldWidth) {
   const alpha = Math.max(0.05, Math.min(1, a));
   return { brush: state.brush, color: state.settings.color, alpha, w: worldWidth, fill: !!state.settings.fill };
 }
-
+function shapeTooSmall(s, camera) {
+  const min = 2 / Math.max(1e-8, camera.scale);  // ~2px in screen space
+  if (!s) return true;
+  if (s.shape === 'line') {
+    const dx = s.end.x - s.start.x, dy = s.end.y - s.start.y;
+    return Math.hypot(dx, dy) < min;
+  }
+  // rect / ellipse
+  const w = Math.abs(s.end.x - s.start.x);
+  const h = Math.abs(s.end.y - s.start.y);
+  return (w < min && h < min); // both tiny -> treat as click
+}
 function startShape(shape, camera, state, canvas, e) {
   if (e.button !== 0) return null;
   try { canvas.setPointerCapture(e.pointerId); } catch {}
@@ -186,6 +198,19 @@ class BaseShapeTool {
 
   onPointerDown(e) {
     if (e.button !== 0) return;
+    {
+      const r = this.canvas.getBoundingClientRect();
+      const screen = { x: e.clientX - r.left, y: e.clientY - r.top };
+      const world  = this.camera.screenToWorld(screen);
+      const hit = hitSelectionUI(world, this.state, this.camera);
+      if (hit) {
+        this._delegatedToSelect = true;
+        try { this.state.setTool?.('select'); } catch {}
+        this.state.tool = 'select';
+        this.state._selectToolSingleton?.onPointerDown?.(e);
+        return;
+      }
+    }
     this.shift = !!e.shiftKey;
     this.dragging = false;
 
@@ -200,12 +225,17 @@ class BaseShapeTool {
 
     // Prepare a live snapshot so we can overdraw only the shape while moving
     this._haveSnapshot = false;
+    this._delegatedToSelect = false;
     this._takeSnapshot();
 
     scheduleRender();
   }
 
   onPointerMove(e) {
+   if (this._delegatedToSelect) {
+     this.state._selectToolSingleton?.onPointerMove?.(e);
+     return;
+   }
     if (!this.shape) return;
 
     const r = this.canvas.getBoundingClientRect();
@@ -227,11 +257,48 @@ class BaseShapeTool {
   }
 
   onPointerUp(e) {
+   if (this._delegatedToSelect) {
+     this.state._selectToolSingleton?.onPointerUp?.(e);
+     this._delegatedToSelect = false;
+     return;
+   }
     if (e.button !== 0) return;
     if (!this.shape) return;
 
     // One compact history entry
+    const tooSmall = !this.dragging || shapeTooSmall(this.shape, this.camera);
+    if (tooSmall) {
+      // Remove the provisional shape we added in onPointerDown
+      const i = this.state.strokes.indexOf(this.shape);
+      if (i !== -1) this.state.strokes.splice(i, 1);
+      try { this.canvas.releasePointerCapture(e.pointerId); } catch {}
+      setDeferIndex(false); // nothing to index
+      try { this._snapshot?.close?.(); } catch {}
+      this._snapshot = null; this._haveSnapshot = false;
+      this.shape = null; this.dragging = false; this.lastScreen = null;
+      scheduleRender();
+      return;
+    }
+
+    // One compact history entry (real draw)
     this.state.history?.pushAdd?.(this.shape);
+  
+    try {
+      this.state.selection?.clear?.();
+      this.state.selection?.add?.(this.shape);
+      this.state._transformActive = true;
+    } catch {}
+
+    // Immediately switch to the Select tool so the next drag manipulates handles
+    try {
+      if (typeof this.state.setTool === 'function') {
+        this.state.setTool('select');
+      } else {
+        this.state.tool = 'select';
+      }
+    } catch {}
+    this.state._hoverHandle = null;
+    this.state._activeHandle = null;
 
     // Clean up
     try { this.canvas.releasePointerCapture(e.pointerId); } catch {}
@@ -250,6 +317,7 @@ class BaseShapeTool {
   }
 
   cancel() {
+    this._delegatedToSelect = false;
     try { this._snapshot?.close?.(); } catch {}
     this._snapshot = null;
     this._haveSnapshot = false;

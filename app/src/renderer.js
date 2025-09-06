@@ -91,6 +91,80 @@ export function strokeCommonSetup(ctx, camera, s, fast) {
   }
 }
 
+function setTextFontWorld(ctx, s, camera) {
+  const scale = Math.max(1e-8, camera.scale);
+  const fsWorld = (s.fontSize || (24 / scale));
+  const pxScreen = Math.max(1, Math.round(fsWorld * scale));
+  const pxWorld  = pxScreen / scale;
+  const fam = s.fontFamily || 'system-ui,-apple-system,Segoe UI,Roboto,sans-serif';
+  ctx.font = `${pxWorld}px ${fam}`;
+}
+
+function drawTextBoxWorld(ctx, camera, s, dpr = 1) {
+  // Unrotated box + center
+  const a = s.start, b = s.end;
+  const minx = Math.min(a.x, b.x), miny = Math.min(a.y, b.y);
+  const maxx = Math.max(a.x, b.x), maxy = Math.max(a.y, b.y);
+  const w = maxx - minx, h = maxy - miny;
+  const cx = (minx + maxx) * 0.5, cy = (miny + maxy) * 0.5;
+  s.bbox = { minx, miny, maxx, maxy };
+
+  // Precomputed wrapping from text.js
+  const fs = s.fontSize || (24 / Math.max(1e-8, camera.scale));
+  const pad = 0.25 * fs;
+  const lineH = (s.lineHeight || 1.25) * fs;
+  const lines = (s.lines || []);
+
+  // Local (centered) coordinates of the box
+  const lx = -w / 2, ly = -h / 2;
+
+  ctx.save();
+
+  // Color/alpha
+  ctx.globalAlpha = Math.max(0.05, Math.min(1, s.alpha ?? 1));
+  ctx.fillStyle = s.color || ctx.strokeStyle || '#e6eaf0';
+  setTextFontWorld(ctx, s, camera);
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'top';
+
+  // Apply rotation first, THEN clip in local space (fixes cut-off)
+  ctx.translate(cx, cy);
+  if (s.rotation) ctx.rotate(s.rotation);
+
+  // Clip the rotated rectangle in local coords
+  ctx.beginPath();
+  ctx.rect(lx, ly, w, h);
+  ctx.clip();
+
+  // Local text start (pad applied in local space)
+  const localLeft = lx + pad;
+  const localTop  = ly + pad;
+
+  // Draw lines
+  let y = localTop;
+  for (let i = 0; i < lines.length; i++) {
+    ctx.fillText(lines[i], localLeft, y);
+    y += lineH;
+  }
+
+  // Draw caret (your caret is computed in unrotated local terms, so this mapping is correct)
+  if (s.editing && s._showCaret && s._caret) {
+    const px = 1 / Math.max(1e-8, dpr * camera.scale);
+    ctx.beginPath();
+    const cxLocal = (s._caret.x - cx);   // same mapping you had before
+    const cyLocal = (s._caret.y - cy);
+    ctx.lineWidth = Math.max(px, 0.75 * px);
+    const prev = ctx.strokeStyle;
+    ctx.strokeStyle = s.color || '#e6eaf0';
+    ctx.moveTo(cxLocal,            cyLocal);
+    ctx.lineTo(cxLocal,            cyLocal + s._caret.h);
+    ctx.stroke();
+    ctx.strokeStyle = prev;
+  }
+
+  ctx.restore();
+}
+
 function animXfFromLayers(s, _state, t){
   const layers = s?.react2?.anim?.layers;
   if (!layers || !layers.length) return null;
@@ -378,32 +452,123 @@ function drawPolylineFastWorldTA(ctx, pts, n, camera, i0, i1, fast, tolOverride)
     }
   }
 }
-function drawShapeWorld(ctx, s, camera) {
+// NEW: rotated selection box/handles for a single text shape
+function drawSelectionHandlesRotatedText(ctx, s, camera, theme, dpr) {
+  const bb = s.bbox;
+  const x0 = bb.minx, y0 = bb.miny, x1 = bb.maxx, y1 = bb.maxy;
+  const cx = (x0 + x1) * 0.5, cy = (y0 + y1) * 0.5;
+
+  const px = 1 / Math.max(1e-8, dpr * camera.scale);
+  const HANDLE_RADIUS_PX = 5;
+  const ROT_OFFSET_PX    = 28;
+  const LEADER_GAP_PX    = 10;
+
+  const r  = HANDLE_RADIUS_PX * px;
+  const lw = Math.max(px, 0.75 * px);
+
+  const w = x1 - x0, h = y1 - y0;
+  const lx = -w / 2, ly = -h / 2;  // local coords after centering
+  const rx =  w / 2, by =  h / 2;
+
+  ctx.save();
+  ctx.translate(cx, cy);
+  if (s.rotation) ctx.rotate(s.rotation);
+
+  // selection rect (rotated)
+  ctx.save();
+  ctx.lineWidth   = lw;
+  ctx.strokeStyle = theme.selStroke;
+  ctx.fillStyle   = theme.selFill;
+  ctx.beginPath();
+  ctx.rect(lx, ly, w, h);
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
+
+  // handles (8)
+  ctx.lineWidth   = lw;
+  ctx.strokeStyle = theme.handleStroke;
+  ctx.fillStyle   = theme.handleFill;
+
+  const points = [
+    [lx, ly],   [0,  ly],   [rx, ly],
+    [rx, 0],                [rx, by],
+    [0,  by],   [lx, by],   [lx, 0]
+  ];
+  for (const [x, y] of points) {
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  }
+
+  // rotation handle (above top edge, in local space)
+  const rotY       = ly - ROT_OFFSET_PX * px;
+  const leaderFrom = ly - LEADER_GAP_PX * px;
+
+  ctx.beginPath();
+  ctx.moveTo(0, leaderFrom);
+  ctx.lineTo(0, rotY);
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.arc(0, rotY, r, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+
+  // tiny arrow on rot handle (match existing style)
+  try {
+    ctx.save();
+    ctx.lineWidth = Math.max(lw * 0.9, 0.8 * px);
+    ctx.strokeStyle = theme.rotateArrow || '#e6eaf0';
+    const ar = r * 0.7;
+    ctx.beginPath();
+    ctx.arc(0, rotY, ar, Math.PI * 0.15, Math.PI * 1.3);
+    ctx.stroke();
+    ctx.restore();
+  } catch {}
+
+  ctx.restore();
+}
+
+function drawShapeWorld(ctx, s, camera, dpr = 1) {
   const a = s.start, b = s.end;
+  if (s.shape === 'text') {
+    drawTextBoxWorld(ctx, camera, s, dpr);
+    return;
+  }
   if (s.shape === 'line') {
     ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke(); return;
   }
   if (s.shape === 'rect') {
+    // draw rect in a rotated local frame (if s.rotation is set)
     let x = Math.min(a.x, b.x), y = Math.min(a.y, b.y);
     let w = Math.abs(b.x - a.x), h = Math.abs(b.y - a.y);
     const minWorld = 0.5 / Math.max(1e-8, camera.scale);
     const cx = x + w / 2, cy = y + h / 2;
     if (w < minWorld) { w = minWorld; x = cx - w / 2; }
     if (h < minWorld) { h = minWorld; y = cy - h / 2; }
-    if (s.fill) { ctx.fillStyle = ctx.strokeStyle; ctx.fillRect(x, y, w, h); }
-    ctx.strokeRect(x, y, w, h); return;
+
+    ctx.save();
+    if (s.rotation) { ctx.translate(cx, cy); ctx.rotate(s.rotation); ctx.translate(-cx, -cy); }
+    const lx = cx - w/2, ly = cy - h/2;
+    if (s.fill) { ctx.fillStyle = ctx.strokeStyle; ctx.fillRect(lx, ly, w, h); }
+    ctx.strokeRect(lx, ly, w, h);
+    ctx.restore();
+    return;
   }
   if (s.shape === 'ellipse') {
     const cx = (a.x + b.x) / 2, cy = (a.y + b.y) / 2;
     const minWorld = 0.5 / Math.max(1e-8, camera.scale);
     const rx = Math.max(minWorld, Math.abs(b.x - a.x) / 2);
     const ry = Math.max(minWorld, Math.abs(b.y - a.y) / 2);
-    ctx.beginPath(); ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
+    ctx.beginPath();
+    // Canvas ellipse supports a rotation argument directly:
+    ctx.ellipse(cx, cy, rx, ry, s.rotation || 0, 0, Math.PI * 2);
     if (s.fill) { ctx.fillStyle = ctx.strokeStyle; ctx.fill(); }
     ctx.stroke(); return;
   }
 }
-
 function invXformBBox(b, s, tx, ty) {
   const is = 1 / Math.max(1e-20, s);
   const r = {
@@ -822,7 +987,7 @@ export function render(state, camera, ctx, canvasLike, opts = {}) {
           const sa = ctx.globalAlpha, lw = ctx.lineWidth;
           ctx.globalAlpha = Math.min(1, sa * 0.6);
           ctx.lineWidth = lw * 1.8;
-          drawShapeWorld(ctx, s, camera);
+          drawShapeWorld(ctx, s, camera, dpr);
           ctx.globalAlpha = sa; ctx.lineWidth = lw;
         }
         ctx.stroke();
@@ -832,10 +997,10 @@ export function render(state, camera, ctx, canvasLike, opts = {}) {
         const sa = ctx.globalAlpha, lw = ctx.lineWidth;
         ctx.globalAlpha = Math.min(1, sa * 0.6);
         ctx.lineWidth = lw * 1.8;
-        drawShapeWorld(ctx, s, camera);
+        drawShapeWorld(ctx, s, camera, dpr);
         ctx.globalAlpha = sa; ctx.lineWidth = lw;
       }
-      drawShapeWorld(ctx, s, camera);
+      drawShapeWorld(ctx, s, camera, dpr);
     }
 
     if (animApplied) ctx.restore();
@@ -844,21 +1009,123 @@ export function render(state, camera, ctx, canvasLike, opts = {}) {
     ctx.setLineDash([]); ctx.shadowBlur = 0; ctx.filter = 'none'; ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
   }
 
-  if (state.selection && state.selection.size) {
+if (state.selection && state.selection.size) {
+  // --- Single selection path ---
+  if (state.selection.size === 1) {
+    const only = Array.from(state.selection)[0];
+
+    // Handle baking transform if present
     const bakeActive = !!state._bake?.active;
     const b = state._bake;
-    let minx=Infinity, miny=Infinity, maxx=-Infinity, maxy=-Infinity;
+    let bb = only.bbox;
+    if (bakeActive && !only._baked) {
+      bb = {
+        minx: bb.minx * b.s + b.tx,
+        miny: bb.miny * b.s + b.ty,
+        maxx: bb.maxx * b.s + b.tx,
+        maxy: bb.maxy * b.s + b.ty
+      };
+    }
+
+    // Rotated text: draw rotated selection box + handles
+    if (only && only.shape === 'text' && Math.abs(only.rotation || 0) > 1e-6) {
+      drawSelectionHandlesRotatedText(ctx, only, camera, theme, dpr);
+
+      // (Optional) keep size label (AABB-based)
+      const wPx = Math.max(0, Math.round((bb.maxx - bb.minx) * camera.scale));
+      const hPx = Math.max(0, Math.round((bb.maxy - bb.miny) * camera.scale));
+      const label = `${wPx} × ${hPx}px`;
+
+      const sp = camera.worldToScreen({ x: bb.maxx, y: bb.maxy });
+      ctx.setTransform(1,0,0,1,0,0);
+      const pad = 6 * dpr;
+      ctx.font = `${12 * dpr}px system-ui,-apple-system,Segoe UI,Roboto,sans-serif`;
+      const metrics = ctx.measureText(label);
+      const lw2 = Math.ceil(metrics.width + pad * 2);
+      const lh = Math.ceil(18 * dpr);
+      const cw = Math.floor(canvasLike.clientWidth * dpr);
+      const ch = Math.floor(canvasLike.clientHeight * dpr);
+      const lx = Math.min(cw - lw2 - 4 * dpr, Math.max(4 * dpr, sp.x * dpr - lw2));
+      const ly = Math.min(ch - lh - 4 * dpr, Math.max(4 * dpr, sp.y * dpr + 8 * dpr));
+      ctx.fillStyle = theme.labelBg;
+      ctx.fillRect(lx, ly, lw2, lh);
+      ctx.strokeStyle = theme.labelStroke;
+      ctx.lineWidth = 1;
+      ctx.strokeRect(lx + 0.5, ly + 0.5, lw2 - 1, lh - 1);
+      ctx.fillStyle = theme.labelText;
+      ctx.fillText(label, lx + pad, ly + lh - 5 * dpr);
+
+      // restore world transform for any later drawing
+      ctx.setTransform(
+        dpr * camera.scale, 0, 0,
+        dpr * camera.scale,
+        dpr * camera.tx, dpr * camera.ty
+      );
+    } else {
+      // Non-rotated or non-text: default axis-aligned selection
+      const px = 1 / Math.max(1e-8, dpr * camera.scale);
+      ctx.save();
+      ctx.lineWidth = Math.max(px, 0.75 * px);
+      ctx.setLineDash([]);
+      ctx.strokeStyle = theme.selStroke;
+      ctx.fillStyle = theme.selFill;
+      const x = bb.minx, y = bb.miny;
+      const w = bb.maxx - bb.minx, h = bb.maxy - bb.miny;
+      ctx.beginPath(); ctx.rect(x, y, w, h); ctx.fill(); ctx.stroke();
+      ctx.restore();
+      drawSelectionHandles(ctx, bb, camera, theme, dpr);
+
+      // Label (same as before)
+      const wPx = Math.max(0, Math.round(w * camera.scale));
+      const hPx = Math.max(0, Math.round(h * camera.scale));
+      const label = `${wPx} × ${hPx}px`;
+      const sp = camera.worldToScreen({ x: bb.maxx, y: bb.maxy });
+      ctx.setTransform(1,0,0,1,0,0);
+      const pad = 6 * dpr;
+      ctx.font = `${12 * dpr}px system-ui,-apple-system,Segoe UI,Roboto,sans-serif`;
+      const metrics = ctx.measureText(label);
+      const lw2 = Math.ceil(metrics.width + pad * 2);
+      const lh = Math.ceil(18 * dpr);
+      const cw = Math.floor(canvasLike.clientWidth * dpr);
+      const ch = Math.floor(canvasLike.clientHeight * dpr);
+      const lx = Math.min(cw - lw2 - 4 * dpr, Math.max(4 * dpr, sp.x * dpr - lw2));
+      const ly = Math.min(ch - lh - 4 * dpr, Math.max(4 * dpr, sp.y * dpr + 8 * dpr));
+      ctx.fillStyle = theme.labelBg;
+      ctx.fillRect(lx, ly, lw2, lh);
+      ctx.strokeStyle = theme.labelStroke;
+      ctx.lineWidth = 1;
+      ctx.strokeRect(lx + 0.5, ly + 0.5, lw2 - 1, lh - 1);
+      ctx.fillStyle = theme.labelText;
+      ctx.fillText(label, lx + pad, ly + lh - 5 * dpr);
+      ctx.setTransform(
+        dpr * camera.scale, 0, 0,
+        dpr * camera.scale,
+        dpr * camera.tx, dpr * camera.ty
+      );
+    }
+  } else {
+    // --- Multi selection path: accumulate AABB correctly ---
+    const bakeActive = !!state._bake?.active;
+    const b = state._bake;
+    let minx = Infinity, miny = Infinity, maxx = -Infinity, maxy = -Infinity;
+
     for (const s of state.selection) {
       if (!state.strokes.includes(s)) continue;
       let bb = s.bbox;
       if (bakeActive && !s._baked) {
-        bb = { minx: bb.minx * b.s + b.tx, miny: bb.miny * b.s + b.ty, maxx: bb.maxx * b.s + b.tx, maxy: bb.maxy * b.s + b.ty };
+        bb = {
+          minx: bb.minx * b.s + b.tx,
+          miny: bb.miny * b.s + b.ty,
+          maxx: bb.maxx * b.s + b.tx,
+          maxy: bb.maxy * b.s + b.ty
+        };
       }
-      if (bb.minx < minx) minx = bb.minx;
-      if (bb.miny < miny) miny = bb.miny;
-      if (bb.maxx > maxx) maxx = bb.maxx;
-      if (bb.maxy > maxy) maxy = bb.maxy;
+      minx = Math.min(minx, bb.minx);
+      miny = Math.min(miny, bb.miny);
+      maxx = Math.max(maxx, bb.maxx);
+      maxy = Math.max(maxy, bb.maxy);
     }
+
     if (Number.isFinite(minx)) {
       const bb = { minx, miny, maxx, maxy };
       const px = 1 / Math.max(1e-8, dpr * camera.scale);
@@ -875,10 +1142,10 @@ export function render(state, camera, ctx, canvasLike, opts = {}) {
       ctx.restore();
       drawSelectionHandles(ctx, bb, camera, theme, dpr);
 
+      // label
       const wPx = Math.max(0, Math.round(w * camera.scale));
       const hPx = Math.max(0, Math.round(h * camera.scale));
       const label = `${wPx} × ${hPx}px`;
-
       const sp = camera.worldToScreen({ x: bb.maxx, y: bb.maxy });
       ctx.setTransform(1,0,0,1,0,0);
       const pad = 6 * dpr;
@@ -886,8 +1153,10 @@ export function render(state, camera, ctx, canvasLike, opts = {}) {
       const metrics = ctx.measureText(label);
       const lw2 = Math.ceil(metrics.width + pad * 2);
       const lh = Math.ceil(18 * dpr);
-      const lx = Math.min(cw - lw2 - 4 * dpr, Math.max(4 * dpr, sp.x*dpr - lw2));
-      const ly = Math.min(ch - lh - 4 * dpr, Math.max(4 * dpr, sp.y*dpr + 8 * dpr));
+      const cw = Math.floor(canvasLike.clientWidth * dpr);
+      const ch = Math.floor(canvasLike.clientHeight * dpr);
+      const lx = Math.min(cw - lw2 - 4 * dpr, Math.max(4 * dpr, sp.x * dpr - lw2));
+      const ly = Math.min(ch - lh - 4 * dpr, Math.max(4 * dpr, sp.y * dpr + 8 * dpr));
       ctx.fillStyle = theme.labelBg;
       ctx.fillRect(lx, ly, lw2, lh);
       ctx.strokeStyle = theme.labelStroke;
@@ -903,6 +1172,8 @@ export function render(state, camera, ctx, canvasLike, opts = {}) {
       );
     }
   }
+}
+
 
   if (state._marquee) {
     ctx.save();

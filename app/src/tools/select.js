@@ -9,6 +9,22 @@ import { pickTopAt } from '../utils/picker.js';
 
 const MOVE_TOL_SQ = 4 * 4;
 
+function rotatedBBoxForAxisAlignedBox(start, end, theta){
+  const cx = (start.x + end.x) * 0.5;
+  const cy = (start.y + end.y) * 0.5;
+  const hw = Math.abs(end.x - start.x) * 0.5;
+  const hh = Math.abs(end.y - start.y) * 0.5;
+  const c = Math.cos(theta), s = Math.sin(theta);
+  // corners in local space
+  const pts = [
+    {x:-hw,y:-hh},{x:+hw,y:-hh},{x:+hw,y:+hh},{x:-hw,y:+hh}
+  ].map(p => ({ x: cx + p.x*c - p.y*s, y: cy + p.x*s + p.y*c }));
+  let minx=Infinity,miny=Infinity,maxx=-Infinity,maxy=-Infinity;
+  for (const p of pts){ if(p.x<minx)minx=p.x; if(p.y<miny)miny=p.y; if(p.x>maxx)maxx=p.x; if(p.y>maxy)maxy=p.y; }
+  return { minx, miny, maxx, maxy };
+}
+
+
 function rectFrom(a, b){
   return { minx: Math.min(a.x,b.x), miny: Math.min(a.y,b.y), maxx: Math.max(a.x,b.x), maxy: Math.max(a.y,b.y) };
 }
@@ -20,7 +36,7 @@ function bboxContains(outer, inner){
          outer.maxx >= inner.maxx && outer.maxy >= inner.maxy;
 }
 
-function selectionBBoxWorld(state){
+export function selectionBBoxWorld(state){
   const bake = globalState._bake;
   let minx=Infinity, miny=Infinity, maxx=-Infinity, maxy=-Infinity;
   for (const s of state.selection){
@@ -40,7 +56,7 @@ function selectionBBoxWorld(state){
   return { minx, miny, maxx, maxy };
 }
 
-function hitHandle(worldPt, bbox, camera){
+export function hitHandle(worldPt, bbox, camera){
   if (!bbox) return null;
   const r = handleWorldRadius(camera);
   const hs = r; 
@@ -75,7 +91,14 @@ function hitHandle(worldPt, bbox, camera){
   }
   return null;
 }
-
+ export function hitSelectionUI(worldPt, state, camera){
+   const bb = selectionBBoxWorld(state);
+   if (!bb) return null;
+   const h = hitHandle(worldPt, bb, camera);
+   if (h) return { type: 'handle', handle: h };
+   if (pointInRect(worldPt, bb)) return { type: 'inside' };
+   return null;
+ }
 function scaleFromHandle(handle, bb, cursor, shiftUniform, altCenter){
   const cx = (bb.minx + bb.maxx) / 2, cy = (bb.miny + bb.maxy) / 2;
   let ox = cx, oy = cy;
@@ -311,7 +334,18 @@ export class SelectTool {
           s.start = { ...m.before.start }; s.end = { ...m.before.end };
         }
         s.w = m.before.w; s.bbox = { ...m.before.bbox };
-        transformStrokeGeom(s, xf);
+        if (this.mode === 'rotate' && s.kind === 'shape' && (s.shape === 'rect' || s.shape === 'ellipse')) {
+          // keep size/position from 'before', only add rotation
+          s.start = { ...m.before.start };
+          s.end   = { ...m.before.end };
+          const baseRot = m.before.rotation || 0;
+          s.rotation = baseRot + xf.theta;     // <- drive rendering rotation
+          // keep bbox correct for picking/index
+          s.bbox = rotatedBBoxForAxisAlignedBox(s.start, s.end, s.rotation || 0);
+        } else {
+          // paths and lines can be baked
+          transformStrokeGeom(s, xf);
+        }
       }
 
       if (this.mode === 'rotate') this.canvas.style.cursor = 'grabbing';

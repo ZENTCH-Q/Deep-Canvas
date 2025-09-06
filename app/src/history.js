@@ -43,6 +43,7 @@ function undo(state){
         if (op.prev?.color != null) op.stroke.color = op.prev.color;
         if (op.prev?.alpha != null) op.stroke.alpha = op.prev.alpha;
         if (op.prev?.fill  != null) op.stroke.fill  = op.prev.fill;
+        if (op.prev?.fontSize != null) op.stroke.fontSize = op.prev.fontSize;
         markDirty(); scheduleRender();
       }
       state.redoStack.push(op);
@@ -110,6 +111,7 @@ function redo(state){
         if (op.next?.color != null) op.stroke.color = op.next.color;
         if (op.next?.alpha != null) op.stroke.alpha = op.next.alpha;
         if (op.next?.fill  != null) op.stroke.fill  = op.next.fill;
+        if (op.next?.fontSize != null) op.stroke.fontSize = op.next.fontSize;
         markDirty(); scheduleRender();
       }
       state.undoStack.push(op);
