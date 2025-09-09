@@ -124,10 +124,22 @@ function drawTextBoxWorld(ctx, camera, s, dpr = 1) {
 
   // Color/alpha
   ctx.globalAlpha = Math.max(0.05, Math.min(1, s.alpha ?? 1));
-  ctx.fillStyle = s.color || ctx.strokeStyle || '#e6eaf0';
+  const styled = s?.react2?.style?.layers?.some(l => l?.enabled) ? ctx.strokeStyle : null;
+  ctx.fillStyle = styled || s.color || ctx.strokeStyle || '#e6eaf0';
   setTextFontWorld(ctx, s, camera);
   ctx.textAlign = 'center';
   ctx.textBaseline = 'top';
+  // if dash/width/glow style layers are active, outline the text so dashes show
+  const wantsStroke = (s?.react2?.style?.layers || []).some(l =>
+    l?.enabled && (l.type === 'dash' || l.type === 'width' || l.type === 'glow')
+  );
+  if (wantsStroke) {
+    const scale = Math.max(1e-8, camera.scale);
+    const fs = s.fontSize || (24 / scale);
+    const outlinePx = Math.max(1, Math.round((s.outlinePx ?? fs * 0.08) * scale)); // ~8% of fs
+    ctx.lineWidth = outlinePx / scale;                 // world units
+    if (!styled) ctx.strokeStyle = ctx.fillStyle;      // match color if style layer didn't set one
+  }
 
   // Apply rotation first, THEN clip in local space (fixes cut-off)
   ctx.translate(cx, cy);
@@ -147,6 +159,7 @@ function drawTextBoxWorld(ctx, camera, s, dpr = 1) {
   for (let i = 0; i < lines.length; i++) {
     // centered around the box’s center (we already clipped to the padded box)
     ctx.fillText(lines[i], localCenterX, y);
+    if (wantsStroke) ctx.strokeText(lines[i], localCenterX, y);
     y += lineH;
   }
 
