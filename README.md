@@ -42,7 +42,7 @@ If SmartScreen warns, click **More info → Run anyway** (unsigned builds).
 - **Tools:** Draw, Paint (bucket), Erase, Delete, Pan, Line/Rect/Ellipse, Select
 - **Pan:** hold **Space**, drag
 - **Zoom:** mouse wheel / trackpad (zooms around cursor)
-- **Undo / Redo:** `Ctrl/⌘ + Z`, `Ctrl+Y` or `Shift+⌘ + Z`
+- **Undo / Redo:** `Ctrl/win + Z`, `Ctrl+Y` or `Shift+win + Z`
 - **Right-click** on canvas: context menu (Reset View, Save PNG, Delete Selected)
 - **Space-Bar** to stop any animation that was playing
 - **Gallery:**
