@@ -96,6 +96,16 @@ export function renormalizeIfNeeded(camera, strokes, opts={}, state){
   const s  = camera.scale;
   const tx = camera.tx;
   const ty = camera.ty;
+  if (camera._home) {
+    const hs  = Number.isFinite(camera._home.s)  ? camera._home.s  : 1;
+    const htx = Number.isFinite(camera._home.tx) ? camera._home.tx : 0;
+    const hty = Number.isFinite(camera._home.ty) ? camera._home.ty : 0;
+    const sf  = Math.max(1e-20, s);
+    const sPrime  = hs / sf;
+    const txPrime = htx - tx * (hs / sf);
+    const tyPrime = hty - ty * (hs / sf);
+    camera._home = { s: sPrime, tx: txPrime, ty: tyPrime };
+  }
 
   camera.scale = 1; camera.tx = 0; camera.ty = 0;
 
@@ -244,6 +254,11 @@ export function worldGCIfNeeded(state, camera, canvas){
         }
         camera.tx += txw * camera.scale;
         camera.ty += tyw * camera.scale;
+        if (camera._home) {
+          const hs = Number.isFinite(camera._home.s) ? camera._home.s : 1;
+          camera._home.tx += txw * hs;
+          camera._home.ty += tyw * hs;
+        }
         changed = true;
       }
     }
@@ -258,6 +273,7 @@ export function worldGCIfNeeded(state, camera, canvas){
       transformStroke(state.strokes[i], s, 0, 0);
     }
     camera.scale *= g; 
+    if (camera._home) camera._home.s *= g;
     changed = true;
   }
 
