@@ -3,8 +3,6 @@
 Fast, offline **infinite canvas** for sketching, whiteboarding, and motion-style doodles.  
 Privacy-first desktop app — no accounts, no cloud, everything saved locally.
 
-I accept any new ideas That can make Deep Canvas Better and Will Try my best to Fulfill any idea that you given :)
-
 https://github.com/ZENTCH-Q/Deep-Canvas.git
 
 Animation Showcase:
@@ -68,3 +66,6 @@ cd deep-canvas
 # dev
 npm install
 npm run dev
+```
+---
+I accept any new ideas That can make Deep Canvas Better and Will Try my best to Fulfill any idea that you given :)
