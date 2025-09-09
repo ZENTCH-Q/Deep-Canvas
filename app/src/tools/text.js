@@ -210,14 +210,15 @@ function layoutTextAndGrow(s, camera, ctx, caretBlinkOn){
     }
     globalIdx += hl.length + 1; // include implicit '\n' split
   }
-
   // fit height to content (no autosize font)
-  const needed = Math.max(scrPxToWorld(BOX_MIN_H_SCR, camera), pad + lines.length * lineH + pad);
-  const x0 = Math.min(s.start.x, s.end.x);
-  const y0 = Math.min(s.start.y, s.end.y);
-  const w  = Math.abs(s.end.x - s.start.x);
+  const needed   = Math.max(scrPxToWorld(BOX_MIN_H_SCR, camera), pad + lines.length * lineH + pad);
+  const x0       = Math.min(s.start.x, s.end.x);
+  const y0       = Math.min(s.start.y, s.end.y);
+  const w        = Math.abs(s.end.x - s.start.x);
+  const currH    = Math.abs(s.end.y - s.start.y);
+  const finalH   = Math.max(needed, currH);  // grow-only
   s.start.x = x0; s.start.y = y0;
-  s.end.x   = x0 + w; s.end.y = y0 + needed;
+  s.end.x   = x0 + w; s.end.y = y0 + finalH;
 
   s.lines = lines;
   s._lineInfo = lineInfo;
@@ -249,6 +250,18 @@ function layoutTextAndGrow(s, camera, ctx, caretBlinkOn){
     const yWorld = y0 + pad + line * lineH;
     s._caret = { x: xWorld, y: yWorld, h: lineH };
   }
+}
+
+const __fsMeasureCanvas = (() => {
+  try { return document.createElement('canvas'); } catch { return null; }
+})();
+const __fsMeasureCtx = __fsMeasureCanvas ? __fsMeasureCanvas.getContext('2d') : null;
+
+/** Programmatically reflow a text shape after changing fontSize/lineHeight/text. */
+export function relayoutTextShape(s, camera){
+  if (!__fsMeasureCtx || !s || s.shape !== 'text') return;
+  // false => caretBlinkOff; we only need geometry/lines here
+  layoutTextAndGrow(s, camera, __fsMeasureCtx, false);
 }
 
 // map a global string index into (line, column) using _lineInfo
@@ -316,7 +329,9 @@ export class TextTool {
     // clicking outside the canvas ends edit
     this._onDocPointerDown = (e) => {
       const withinCanvas = (e.target === this.canvas) || e.target.closest?.('canvas');
-      if (!withinCanvas && this._active) this._finishEditing(true);
+      // NEW: allow clicks on Deep-Canvas UI widgets (e.g. font-size pill)
+      const withinUi = e.target.closest?.('[data-dc-ui="true"]');
+      if (!withinCanvas && !withinUi && this._active) this._finishEditing(true);
     };
     document.addEventListener('pointerdown', this._onDocPointerDown, { capture: true });
 
@@ -487,6 +502,14 @@ export class TextTool {
 
   // ---- keyboard ----
   _handleKeyDown(e){
+    const tgt = e.target;
+    const ae  = document.activeElement;
+    const inUi =
+      tgt?.closest?.('[data-dc-ui="true"]') ||
+      ae?.closest?.('[data-dc-ui="true"]') ||
+      (tgt && (tgt.tagName === 'INPUT' || tgt.tagName === 'TEXTAREA' || tgt.isContentEditable)) ||
+      (ae  && (ae.tagName  === 'INPUT' || ae.tagName  === 'TEXTAREA' || ae.isContentEditable));
+    if (inUi) return;
     // Allow global shortcuts except edit-critical keys below
     if (e.key === 'Delete'){
       if (this._active){
@@ -535,6 +558,10 @@ export class TextTool {
   }
   _handlePaste(e){
     if (!this._active) return;
+    // Don't paste into the text shape if the UI owns focus
+    const tgt = e.target;
+    const ae  = document.activeElement;
+    if (tgt?.closest?.('[data-dc-ui="true"]') || ae?.closest?.('[data-dc-ui="true"]')) return;
     try{
       const raw = (e.clipboardData || window.clipboardData).getData('text');
       if (raw){

@@ -2,6 +2,8 @@
 import { visibleWorldRect } from './camera.js';
 import { rectsIntersect } from './utils/geometry.js';
 import { query, grid } from './spatial_index.js';
+import { relayoutTextShape } from './tools/text.js';
+import { scheduleRender, markDirty } from './state.js';
 
 const STRIDE = 3;
 
@@ -454,8 +456,123 @@ function drawPolylineFastWorldTA(ctx, pts, n, camera, i0, i1, fast, tolOverride)
   }
 }
 
-// NEW: rotated selection box/handles for a single text shape
-// Rotated selection box + handles for a single text shape (pixel-sized handles)
+let __fsw = null;   // { el, input, plus, minus, bind(state), update(target,camera,canvas) }
+
+function rightMidWorldOfText(s){
+  const minx = Math.min(s.start.x, s.end.x), maxx = Math.max(s.start.x, s.end.x);
+  const miny = Math.min(s.start.y, s.end.y), maxy = Math.max(s.start.y, s.end.y);
+  const cx = (minx + maxx) * 0.5, cy = (miny + maxy) * 0.5;
+  const hw = (maxx - minx) * 0.5;
+  const th = s.rotation || 0;
+  const co = Math.cos(th), si = Math.sin(th);
+  return { x: cx + hw * co, y: cy + hw * si };
+}
+
+function ensureFSWidget(){
+  if (__fsw) return __fsw;
+
+  const el = document.createElement('div');
+  // Mark as UI so tools ignore its events
+  el.setAttribute('data-dc-ui', 'true');
+  el.style.position = 'absolute';
+  el.style.left = '-9999px';
+  el.style.top  = '-9999px';
+  el.style.zIndex = '99999';
+  el.style.display = 'none';
+  el.style.pointerEvents = 'auto';
+  el.setAttribute('data-dc-ui', 'true');
+  // pill styling (inline)
+  el.style.background = 'rgba(17,20,24,0.92)';
+  el.style.border = '1px solid rgba(182,194,207,0.5)';
+  el.style.borderRadius = '8px';
+  el.style.padding = '6px 8px';
+  el.style.boxShadow = '0 4px 14px rgba(0,0,0,0.35)';
+  el.style.font = '12px system-ui,-apple-system,Segoe UI,Roboto,sans-serif';
+  el.style.color = '#e6eaf0';
+
+  el.innerHTML = `
+    <button data-minus style="
+      width:22px;height:22px;border-radius:6px;
+      border:1px solid rgba(182,194,207,0.45);
+      background:#15181f;color:#e6eaf0;cursor:pointer;">−</button>
+    <input data-input type="number" min="4" max="512" step="1" style="
+      width:52px;height:22px;border-radius:6px;padding:0 6px;
+      border:1px solid rgba(182,194,207,0.45);
+      background:#0f131a;color:#e6eaf0;text-align:right;margin:0 6px;" />
+    <button data-plus style="
+      width:22px;height:22px;border-radius:6px;
+      border:1px solid rgba(182,194,207,0.45);
+      background:#15181f;color:#e6eaf0;cursor:pointer;margin-left:6px;">+</button>
+  `;
+
+  const input = el.querySelector('[data-input]');
+  const minus = el.querySelector('[data-minus]');
+  const plus  = el.querySelector('[data-plus]');
+
+  let bindState = null; // { state, camera }
+  let currentShape = null;
+
+  function setPx(px){
+    if (!bindState || !currentShape) return;
+    const cam = bindState.camera;
+    const fsWorld = px / Math.max(1e-8, cam.scale);
+    currentShape.fontSize = Math.max(1 / Math.max(1e-8, cam.scale), Math.min(2048, fsWorld));
+    relayoutTextShape(currentShape, cam);
+    markDirty(); scheduleRender();
+  }
+
+  minus.addEventListener('click', () => {
+    const v = Math.max(4, (+(input.value||0)) - 1);
+    input.value = v; setPx(v);
+  });
+  plus.addEventListener('click', () => {
+    const v = Math.min(512, (+(input.value||0)) + 1);
+    input.value = v; setPx(v);
+  });
+  input.addEventListener('change', () => {
+    let v = +(input.value||0);
+    if (!Number.isFinite(v)) v = 12;
+    v = Math.max(4, Math.min(512, v));
+    input.value = v; setPx(v);
+  });
+  ['keydown','keypress','keyup'].forEach(type=>{
+    input.addEventListener(type, ev => {
+      ev.stopPropagation();
+      // let the input keep default behavior so typing works
+    }, { capture:false });
+  });
+
+  for (const elc of [el, input, minus, plus]) {
+    ['pointerdown','mousedown'].forEach(type=>{
+      elc.addEventListener(type, evt => { evt.stopPropagation(); }, { capture: true });
+    });
+  }
+
+  function bind(state, camera){ bindState = { state, camera }; }
+  function update(targetShape, camera, canvasLike){
+    // keep the widget inside the canvas container so it stacks like other pills
+    const host = canvasLike?.parentElement || canvasLike || document.body;
+    if (el.parentNode !== host) host.appendChild(el);
+
+    if (!targetShape || targetShape.shape !== 'text'){ // show even while editing if you want
+      el.style.display = 'none'; currentShape = null; return;
+    }
+    currentShape = targetShape;
+    const px = Math.round((currentShape.fontSize || (24 / Math.max(1e-8, camera.scale))) * camera.scale);
+    if (document.activeElement !== input) input.value = px;
+    const w = rightMidWorldOfText(currentShape);
+    const sp = camera.worldToScreen(w);
+    const rect = host.getBoundingClientRect();
+    const x = sp.x + 10;
+    const y = sp.y - 18;
+    el.style.display = 'block';
+    el.style.left = `${Math.round(x)}px`;
+    el.style.top  = `${Math.round(y)}px`;
+  }
+  __fsw = { el, input, plus, minus, bind, update };
+  return __fsw;
+}
+
 function drawSelectionHandlesRotatedText(ctx, s, camera, theme, dpr) {
   const bb = s.bbox;
   const x0 = bb.minx, y0 = bb.miny, x1 = bb.maxx, y1 = bb.maxy;
@@ -782,7 +899,26 @@ export function render(state, camera, ctx, canvasLike, opts = {}) {
     ctx.globalAlpha = prevA;
   }
 
-  if (!skipSnapshotPath && state._navActive && state._navBmp && state._navCam0) {
+    try {
+      const fsw = ensureFSWidget();
+      fsw.bind(state, camera);
+      let target = null;
+      // 1) prefer an actively edited text box
+      if (state?.strokes && state.strokes.length) {
+        for (let i = state.strokes.length - 1; i >= 0; i--) {
+          const s = state.strokes[i];
+          if (s && s.shape === 'text' && s.editing) { target = s; break; }
+        }
+      }
+      // 2) otherwise fallback to single selected text (selection mode)
+      if (!target && state.selection && state.selection.size === 1) {
+        const only = Array.from(state.selection)[0];
+        if (only && only.shape === 'text') target = only;
+      }
+      fsw.update(target, camera, canvasLike);
+    } catch {}
+
+    if (!skipSnapshotPath && state._navActive && state._navBmp && state._navCam0) {
     const s0 = state._navCam0.s, tx0 = state._navCam0.tx, ty0 = state._navCam0.ty;
     const s1 = camera.scale, tx1 = camera.tx, ty1 = camera.ty;
     const a = s1 / Math.max(1e-20, s0);
@@ -1175,7 +1311,6 @@ if (state.selection && state.selection.size) {
     }
   }
 }
-
 
   if (state._marquee) {
     ctx.save();
