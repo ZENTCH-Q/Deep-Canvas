@@ -4,6 +4,24 @@ import { ensurePathChunks } from './path_chunks.js';
 
 const STRIDE = 3;
 
+function invRotateAround(p, c, theta){
+  if (!theta) return { x: p.x, y: p.y };
+  const s = Math.sin(-theta), co = Math.cos(-theta);
+  const dx = p.x - c.x, dy = p.y - c.y;
+  return { x: c.x + dx*co - dy*s, y: c.y + dx*s + dy*co };
+}
+
+function hitRotatedRect(start, end, rotation, p, r){
+  // Axis-aligned box in local space, then rotate the point back to local.
+  const minx = Math.min(start.x, end.x), maxx = Math.max(start.x, end.x);
+  const miny = Math.min(start.y, end.y), maxy = Math.max(start.y, end.y);
+  const cx = (minx + maxx) * 0.5, cy = (miny + maxy) * 0.5;
+  const lp = invRotateAround(p, {x:cx,y:cy}, rotation || 0);
+  // Expand by pick radius r so edges are easy to grab too.
+  return (lp.x >= minx - r && lp.x <= maxx + r &&
+          lp.y >= miny - r && lp.y <= maxy + r);
+}
+
 function minDistWorld_Path(s, p){
   // Fast, robust: full scan (we only call this for a tiny set of candidates).
   let best = Infinity;
@@ -175,6 +193,9 @@ export function isHitConsideringBake(stroke, pWorld, rWorld, bake, camera){
 
   if (stroke.kind === 'path') return hitPath(stroke, p, r);
   if (stroke.kind === 'shape'){
+    if (stroke.shape === 'text'){
+      return hitRotatedRect(stroke.start, stroke.end, stroke.rotation || 0, p, r);
+    }
     if (stroke.shape==='line')    return hitLine(stroke, p, r);
     if (stroke.shape==='rect')    return hitRect(stroke, p, r);
     if (stroke.shape==='ellipse') return hitEllipse(stroke, p, r, camera);
@@ -202,6 +223,17 @@ export function distancePxConsideringBake(stroke, pWorld, camera, bake){
     const t = (stroke.w||1)*0.5;
     dWorld = Math.max(0, dCenter - t);
   } else if (stroke.kind === 'shape'){
+    if (stroke.shape === 'text'){
+      const minx = Math.min(stroke.start.x, stroke.end.x);
+      const maxx = Math.max(stroke.start.x, stroke.end.x);
+      const miny = Math.min(stroke.start.y, stroke.end.y);
+      const maxy = Math.max(stroke.start.y, stroke.end.y);
+      const cx = (minx + maxx) * 0.5, cy = (miny + maxy) * 0.5;
+      const lp = invRotateAround(p, {x:cx,y:cy}, stroke.rotation || 0);
+      const dx = (lp.x < minx) ? (minx - lp.x) : (lp.x > maxx) ? (lp.x - maxx) : 0;
+      const dy = (lp.y < miny) ? (miny - lp.y) : (lp.y > maxy) ? (lp.y - maxy) : 0;
+      dWorld = Math.hypot(dx, dy); // 0 when inside; grows outside
+    }
     if (stroke.shape === 'line'){
       const dCenter = Math.sqrt(distSqPointSeg(p, stroke.start, stroke.end));
       const t = (stroke.w||1)*0.5;

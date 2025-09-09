@@ -124,7 +124,7 @@ function drawTextBoxWorld(ctx, camera, s, dpr = 1) {
   ctx.globalAlpha = Math.max(0.05, Math.min(1, s.alpha ?? 1));
   ctx.fillStyle = s.color || ctx.strokeStyle || '#e6eaf0';
   setTextFontWorld(ctx, s, camera);
-  ctx.textAlign = 'left';
+  ctx.textAlign = 'center';
   ctx.textBaseline = 'top';
 
   // Apply rotation first, THEN clip in local space (fixes cut-off)
@@ -137,13 +137,14 @@ function drawTextBoxWorld(ctx, camera, s, dpr = 1) {
   ctx.clip();
 
   // Local text start (pad applied in local space)
-  const localLeft = lx + pad;
+  const localCenterX = 0;
   const localTop  = ly + pad;
 
   // Draw lines
   let y = localTop;
   for (let i = 0; i < lines.length; i++) {
-    ctx.fillText(lines[i], localLeft, y);
+    // centered around the box’s center (we already clipped to the padded box)
+    ctx.fillText(lines[i], localCenterX, y);
     y += lineH;
   }
 
@@ -452,7 +453,9 @@ function drawPolylineFastWorldTA(ctx, pts, n, camera, i0, i1, fast, tolOverride)
     }
   }
 }
+
 // NEW: rotated selection box/handles for a single text shape
+// Rotated selection box + handles for a single text shape (pixel-sized handles)
 function drawSelectionHandlesRotatedText(ctx, s, camera, theme, dpr) {
   const bb = s.bbox;
   const x0 = bb.minx, y0 = bb.miny, x1 = bb.maxx, y1 = bb.maxy;
@@ -463,11 +466,11 @@ function drawSelectionHandlesRotatedText(ctx, s, camera, theme, dpr) {
   const ROT_OFFSET_PX    = 28;
   const LEADER_GAP_PX    = 10;
 
-  const r  = HANDLE_RADIUS_PX * px;
-  const lw = Math.max(px, 0.75 * px);
+  const r  = HANDLE_RADIUS_PX * px;           // handle radius in world units
+  const lw = Math.max(px, 0.75 * px);         // stroke width in world units
 
   const w = x1 - x0, h = y1 - y0;
-  const lx = -w / 2, ly = -h / 2;  // local coords after centering
+  const lx = -w / 2, ly = -h / 2;
   const rx =  w / 2, by =  h / 2;
 
   ctx.save();
@@ -489,7 +492,6 @@ function drawSelectionHandlesRotatedText(ctx, s, camera, theme, dpr) {
   ctx.lineWidth   = lw;
   ctx.strokeStyle = theme.handleStroke;
   ctx.fillStyle   = theme.handleFill;
-
   const points = [
     [lx, ly],   [0,  ly],   [rx, ly],
     [rx, 0],                [rx, by],
@@ -502,7 +504,7 @@ function drawSelectionHandlesRotatedText(ctx, s, camera, theme, dpr) {
     ctx.stroke();
   }
 
-  // rotation handle (above top edge, in local space)
+  // rotation handle + leader
   const rotY       = ly - ROT_OFFSET_PX * px;
   const leaderFrom = ly - LEADER_GAP_PX * px;
 
@@ -516,7 +518,7 @@ function drawSelectionHandlesRotatedText(ctx, s, camera, theme, dpr) {
   ctx.fill();
   ctx.stroke();
 
-  // tiny arrow on rot handle (match existing style)
+  // arrow accent
   try {
     ctx.save();
     ctx.lineWidth = Math.max(lw * 0.9, 0.8 * px);

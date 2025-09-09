@@ -228,16 +228,11 @@ function layoutTextAndGrow(s, camera, ctx, caretBlinkOn){
     maxx: Math.max(s.start.x, s.end.x),
     maxy: Math.max(s.start.y, s.end.y),
   };
-  s.bbox = {
-    minx: Math.min(s.start.x, s.end.x),
-    miny: Math.min(s.start.y, s.end.y),
-    maxx: Math.max(s.start.x, s.end.x),
-    maxy: Math.max(s.start.y, s.end.y),
-  };
 
   // caret metrics (no string mutation): compute world-space caret x/y/height
   s._showCaret = !!(s.editing && caretBlinkOn);
   s._caret = null;
+  s._lineWidths = lines.map(t => measure(ctx, t));
   if (s.editing && typeof s.caret === 'number' && s.lines && s.lines.length) {
     const { line, col } = caretLineColFromIndex(s, s.caret);
     setCtxFont(ctx, s, camera);
@@ -245,7 +240,12 @@ function layoutTextAndGrow(s, camera, ctx, caretBlinkOn){
     const leftPx = measure(ctx, leftText);          // px
     const x0 = Math.min(s.start.x, s.end.x);
     const y0 = Math.min(s.start.y, s.end.y);
-    const xWorld = x0 + pad + (leftPx / Math.max(1e-8, camera.scale));
+    const w  = Math.abs(s.end.x - s.start.x);
+    const lineWidthPx = s._lineWidths?.[line] || 0;
+    const scale = Math.max(1e-8, camera.scale);
+    const centerWorld = x0 + w/2;
+    const leftEdgeWorld = centerWorld - (lineWidthPx / scale) * 0.5;
+    const xWorld = leftEdgeWorld + (leftPx / scale);
     const yWorld = y0 + pad + line * lineH;
     s._caret = { x: xWorld, y: yWorld, h: lineH };
   }
@@ -283,6 +283,7 @@ export class TextTool {
     this.canvas = canvas;
     this.camera = camera;
     this.state  = state;
+    this._hoverHandle = null;
 
     this._active = null;
 
@@ -327,6 +328,16 @@ export class TextTool {
 
     // track original text for a single coalesced history entry
     this._sessionTextBefore = null;
+  }
+
+  _setCursor(c){ try{ this.canvas.style.cursor=c; }catch{} }
+  _cursorForHandle(h){
+    return h==='n'||h==='s' ? 'ns-resize' :
+           h==='e'||h==='w' ? 'ew-resize' :
+           h==='ne'||h==='sw'? 'nesw-resize' :
+           h==='nw'||h==='se'? 'nwse-resize' :
+           h==='rot'          ? 'grab' :
+           this._active ? 'text' : 'crosshair';
   }
 
   destroy(){
@@ -414,13 +425,20 @@ export class TextTool {
     const pad = 0.25 * (s.fontSize || scrPxToWorld(DEFAULT_FS_SCR, this.camera));
     const lineH = (s.lineHeight || 1.25) * (s.fontSize || scrPxToWorld(DEFAULT_FS_SCR, this.camera));
 
-    const xLocal = lp.x - bb.minx - pad;
+    const wBox = bb.maxx - bb.minx;
+    const scale = Math.max(1e-8, this.camera.scale);
     const yLocal = lp.y - bb.miny - pad;
 
     const line = Math.max(0, Math.min(s.lines.length-1, Math.floor(yLocal / lineH)));
     setCtxFont(this._ctx, s, this.camera);
     const text = s.lines[line] || '';
-    const xPx = Math.max(0, xLocal * Math.max(1e-8, this.camera.scale));
+    const lineWidthPx = measure(this._ctx, text);
+    const centerWorld = bb.minx + wBox/2;
+    const leftEdgeWorld = centerWorld - (lineWidthPx / scale) * 0.5;
+    let xPx = (lp.x - leftEdgeWorld) * scale;
+    // clamp to [0, lineWidthPx]
+    if (!Number.isFinite(xPx)) xPx = 0;
+    xPx = Math.max(0, Math.min(lineWidthPx, xPx));
 
     // Compare in *pixels* (measureText is px)
     let col = 0;
@@ -442,6 +460,7 @@ export class TextTool {
     const i = Math.max(0, Math.min(t.length, s.caret ?? t.length));
     s.text = t.slice(0, i) + txt + t.slice(i);
     s.caret = i + txt.length;
+    this._blinkOn = true;
     layoutTextAndGrow(s, this.camera, this._ctx, this._blinkOn);
     markDirty(); scheduleRender();
   }
@@ -517,8 +536,13 @@ export class TextTool {
   _handlePaste(e){
     if (!this._active) return;
     try{
-      const txt = (e.clipboardData || window.clipboardData).getData('text');
-      if (txt){ e.preventDefault(); this._insertAtCaret(String(txt).replace(/\r/g,'')); }
+      const raw = (e.clipboardData || window.clipboardData).getData('text');
+      if (raw){
+        e.preventDefault();
+        const MAX = 10000; // ~10k chars is plenty
+        const txt = String(raw).replace(/\r/g,'').slice(0, MAX);
+        this._insertAtCaret(txt);
+      }
     } catch {}
   }
 
@@ -528,6 +552,14 @@ export class TextTool {
     const r = this.canvas.getBoundingClientRect();
     const screen = { x: e.clientX - r.left, y: e.clientY - r.top };
     const world  = this.camera.screenToWorld(screen);
+
+    if (!this._drafting && !this._before){
+      const s = this._active || topTextAt(this.state, world);
+      let h = null;
+      if (s) h = hitHandleRotAware(world, s, this.camera);
+      this._hoverHandle = h;
+      this._setCursor(this._cursorForHandle(h));
+    }
 
     // --- If a text is already active, keep your existing flow ---
     if (this._active){
@@ -542,6 +574,7 @@ export class TextTool {
         this._rotAngle0 = a0p;
         this._before = snapshotGeometry(s);
         try { this.canvas.setPointerCapture(e.pointerId); } catch {}
+        this._setCursor('grabbing');
         return;
       } else if (h){
         this._mode = 'scale';
@@ -561,6 +594,8 @@ export class TextTool {
           this._mode = 'move';
           this._before = snapshotGeometry(s);
           this._dragMove = { dx: lp.x - bb.minx, dy: lp.y - bb.miny };
+          this._grabLocalFromCenter = { x: lp.x - c.x, y: lp.y - c.y };
+          this._half = { x: (bb.maxx - bb.minx)/2, y: (bb.maxy - bb.miny)/2 };
           try { this.canvas.setPointerCapture(e.pointerId); } catch {}
           return;
         }
@@ -717,7 +752,11 @@ export class TextTool {
       }
 
       // NOTE: never change font size during transforms; wrapping updates as width changes
-      layoutTextAndGrow(s, this.camera, this._ctx, this._blinkOn);
+      const now=performance.now();
+      if (!this._lastLayoutAt || now - this._lastLayoutAt > 16){
+        this._lastLayoutAt = now;
+        layoutTextAndGrow(s, this.camera, this._ctx, this._blinkOn);
+      }
       markDirty(); scheduleRender();
       return;
     }
@@ -725,6 +764,7 @@ export class TextTool {
 
   onPointerUp(e){
     if (e.button !== 0) return;
+    this._setCursor(this._cursorForHandle(this._hoverHandle));
 
     if (this._drafting){
       const s = this._active;
@@ -748,6 +788,7 @@ export class TextTool {
       try { this.canvas.releasePointerCapture(e.pointerId); } catch {}
       this._drafting = false;
       this._downWorld = null; this._downScreen = null;
+      try { this.state._transformActive = false; } catch {}
       try {
         this.state.selection?.clear?.();
         this.state.selection?.add?.(s);
@@ -768,6 +809,7 @@ export class TextTool {
       this._mode = null; this._handle = null;
       this._before = null; this._dragMove = null;
       try { this.canvas.releasePointerCapture(e.pointerId); } catch {}
+      try { this.state._transformActive = false; } catch {}
       scheduleRender();
     }
   }
@@ -779,6 +821,7 @@ export class TextTool {
     this._downScreen = null;
     this._mode = null; this._handle = null;
     this._dragMove = null; this._before = null;
+    try { this.state._transformActive = false; } catch {}
     this._sessionTextBefore = null;
     scheduleRender();
   }
