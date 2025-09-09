@@ -3,6 +3,8 @@
 Fast, offline **infinite canvas** for sketching, whiteboarding, and motion-style doodles.  
 Privacy-first desktop app — no accounts, no cloud, everything saved locally.
 
+I accept any new ideas That can make Deep Canvas Better and Will Try my best to Fulfill any idea that you given :)
+
 https://github.com/ZENTCH-Q/Deep-Canvas.git
 
 Animation Showcase:
@@ -44,6 +46,7 @@ If SmartScreen warns, click **More info → Run anyway** (unsigned builds).
 - **Zoom:** mouse wheel / trackpad (zooms around cursor)
 - **Undo / Redo:** `Ctrl/⌘ + Z`, `Ctrl+Y` or `Shift+⌘ + Z`
 - **Right-click** on canvas: context menu (Reset View, Save PNG, Delete Selected)
+- **Space-Bar** to stop any animation that was playing
 - **Gallery:**
   - Click **+** to create
   - **Double-click** card image to open canvas
