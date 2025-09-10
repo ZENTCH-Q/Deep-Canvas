@@ -43,7 +43,6 @@ If SmartScreen warns, click More info → Run anyway (unsigned builds).
 
 ## Quick start & hotkeys
 
-<<<<<<< HEAD
 - Tools: Draw, Paint (bucket), Erase, Delete, Pan, Line/Rect/Ellipse, Select
 - Pan: hold Space, drag
 - Zoom: mouse wheel / trackpad (zooms around cursor)
@@ -67,7 +66,6 @@ If SmartScreen warns, click More info → Run anyway (unsigned builds).
   - **Double-click** title to rename
   - **⋯** menu → **Delete**
   - Thumbnails show the **last camera view** you left the canvas in
->>>>>>> 7990ecad088e9b5a861d201bf62c5d18287650e1
 
 ---
 
@@ -88,4 +86,3 @@ npm run dev
 =======
 ---
 I accept any new ideas That can make Deep Canvas Better and Will Try my best to Fulfill any idea that you given :)
->>>>>>> 7990ecad088e9b5a861d201bf62c5d18287650e1
