@@ -132,10 +132,11 @@ function drawTextBoxWorld(ctx, camera, s, dpr = 1) {
 
   // Color/alpha
   ctx.globalAlpha = Math.max(0.05, Math.min(1, s.alpha ?? 1));
-  const styled = s?.react2?.style?.layers?.some(l => l?.enabled) ? ctx.strokeStyle : null;
+  const styled = s?.react2?.style?.layers?.some(l => l?.enabled && l?.type && l.type !== 'none') ? ctx.strokeStyle : null;
   ctx.fillStyle = styled || s.color || ctx.strokeStyle || '#e6eaf0';
   setTextFontWorld(ctx, s, camera);
-  ctx.textAlign = 'center';
+  const align = s.align || 'center';
+  ctx.textAlign = (align === 'left') ? 'left' : (align === 'right' ? 'right' : 'center');
   ctx.textBaseline = 'top';
   // if dash/width/glow style layers are active, outline the text so dashes show
   const wantsStroke = (s?.react2?.style?.layers || []).some(l =>
@@ -161,13 +162,45 @@ function drawTextBoxWorld(ctx, camera, s, dpr = 1) {
   // Local text start (pad applied in local space)
   const localCenterX = 0;
   const localTop  = ly + pad;
+  const lx0 = lx + pad; // left padded edge
+  const rx0 = (-lx) - pad; // right padded edge (since -lx = w/2)
+
+  // Selection highlight (rendered behind text when editing)
+  if (s.editing && Number.isFinite(s.selStart) && Number.isFinite(s.selEnd) && s.selStart !== s.selEnd) {
+    const a = Math.min(s.selStart, s.selEnd);
+    const b = Math.max(s.selStart, s.selEnd);
+    try {
+      ctx.save();
+      const prevFill = ctx.fillStyle;
+      ctx.fillStyle = 'rgba(58,122,254,0.28)';
+      for (let i = 0; i < lines.length; i++) {
+        const info = (s._lineInfo || [])[i];
+        const text = lines[i] || '';
+        const startIdx = info ? info.startIdx : 0;
+        const endIdx   = info ? info.endIdx   : startIdx + text.length;
+        const sa = Math.max(0, Math.min(text.length, a - startIdx));
+        const sb = Math.max(0, Math.min(text.length, b - startIdx));
+        if (sb <= 0 || sa >= text.length || sa >= sb) continue;
+        const fullW = ctx.measureText(text).width;
+        const preW  = ctx.measureText(text.slice(0, sa)).width;
+        const selW  = ctx.measureText(text.slice(sa, sb)).width;
+        const xBase = (align === 'left') ? lx0 : (align === 'right' ? (rx0 - fullW) : (localCenterX - fullW/2));
+        const x = xBase + preW;
+        const y = localTop + i * lineH;
+        ctx.fillRect(x, y, selW, lineH);
+      }
+      ctx.fillStyle = prevFill;
+      ctx.restore();
+    } catch {}
+  }
 
   // Draw lines
   let y = localTop;
+  const xAnchor = (align === 'left') ? lx0 : (align === 'right' ? rx0 : localCenterX);
   for (let i = 0; i < lines.length; i++) {
     // centered around the box’s center (we already clipped to the padded box)
-    ctx.fillText(lines[i], localCenterX, y);
-    if (wantsStroke) ctx.strokeText(lines[i], localCenterX, y);
+    ctx.fillText(lines[i], xAnchor, y);
+    if (wantsStroke) ctx.strokeText(lines[i], xAnchor, y);
     y += lineH;
   }
 
@@ -515,7 +548,7 @@ function ensureFSWidget(){
     <button data-minus style="
       width:22px;height:22px;border-radius:6px;
       border:1px solid rgba(182,194,207,0.45);
-      background:#15181f;color:#e6eaf0;cursor:pointer;">−</button>
+      background:#15181f;color:#e6eaf0;cursor:pointer;">-</button>
     <input data-input type="number" min="4" max="512" step="1" style="
       width:52px;height:22px;border-radius:6px;padding:0 6px;
       border:1px solid rgba(182,194,207,0.45);
@@ -524,11 +557,36 @@ function ensureFSWidget(){
       width:22px;height:22px;border-radius:6px;
       border:1px solid rgba(182,194,207,0.45);
       background:#15181f;color:#e6eaf0;cursor:pointer;margin-left:6px;">+</button>
+    <div style="height:6px"></div>
+    <div data-align-row style="display:flex;gap:6px;align-items:center;justify-content:center">
+      <button data-align="left" title="Align Left" style="width:22px;height:22px;border-radius:6px;border:1px solid rgba(182,194,207,0.45);background:#15181f;color:#e6eaf0;cursor:pointer">L</button>
+      <button data-align="center" title="Align Center" style="width:22px;height:22px;border-radius:6px;border:1px solid rgba(182,194,207,0.45);background:#15181f;color:#e6eaf0;cursor:pointer">C</button>
+      <button data-align="right" title="Align Right" style="width:22px;height:22px;border-radius:6px;border:1px solid rgba(182,194,207,0.45);background:#15181f;color:#e6eaf0;cursor:pointer">R</button>
+    </div>
+    <div data-font-row style="display:flex;gap:6px;align-items:center;justify-content:center;margin-top:6px">
+      <select data-font style="height:24px;border-radius:6px;padding:0 6px;border:1px solid rgba(182,194,207,0.45);background:#15181f;color:#e6eaf0;max-width:220px">
+        <option value="system-ui,-apple-system,Segoe UI,Roboto,sans-serif">System</option>
+        <option value="Segoe UI">Segoe UI</option>
+        <option value="Roboto">Roboto</option>
+        <option value="Arial, Helvetica, sans-serif">Arial</option>
+        <option value="Georgia, 'Times New Roman', serif">Serif (Georgia)</option>
+        <option value="'Times New Roman', Times, serif">Times New Roman</option>
+        <option value="'Courier New', Courier, monospace">Courier New</option>
+        <option value="'Caveat', system-ui,-apple-system,Segoe UI,Roboto,sans-serif">Caveat (Handwritten)</option>
+        <option value="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace">Monospace</option>
+      </select>
+    </div>
   `;
 
   const input = el.querySelector('[data-input]');
   const minus = el.querySelector('[data-minus]');
   const plus  = el.querySelector('[data-plus]');
+  const alignButtons = {
+    left:   el.querySelector('[data-align="left"]'),
+    center: el.querySelector('[data-align="center"]'),
+    right:  el.querySelector('[data-align="right"]'),
+  };
+  const fontSel = el.querySelector('[data-font]');
 
   let bindState = null; // { state, camera }
   let currentShape = null;
@@ -550,6 +608,31 @@ function ensureFSWidget(){
     const v = Math.min(512, (+(input.value||0)) + 1);
     input.value = v; setPx(v);
   });
+
+  // align
+  Object.entries(alignButtons).forEach(([key, btn]) => {
+    if (!btn) return;
+    btn.addEventListener('click', () => {
+      // update align and reflow
+      const cam = bindState?.camera || camera;
+      if (currentShape) { currentShape.align = (key === 'left' || key === 'right') ? key : 'center'; try { relayoutTextShape(currentShape, cam); } catch {} markDirty(); scheduleRender(); }
+    });
+  });
+  // font select
+  if (fontSel) {
+    fontSel.addEventListener('change', () => {
+      if (!currentShape) return;
+      const fam = String(fontSel.value || '').trim();
+      const cam = bindState?.camera || camera;
+      currentShape.fontFamily = fam || 'system-ui,-apple-system,Segoe UI,Roboto,sans-serif';
+      try { relayoutTextShape(currentShape, cam); } catch {}
+      markDirty(); scheduleRender();
+    });
+    // prevent TextTool from intercepting typing while select has focus
+    ['keydown','keypress','keyup'].forEach(type=>{
+      fontSel.addEventListener(type, ev => { ev.stopPropagation(); }, { capture:false });
+    });
+  }
   input.addEventListener('change', () => {
     let v = +(input.value||0);
     if (!Number.isFinite(v)) v = 12;
@@ -563,7 +646,7 @@ function ensureFSWidget(){
     }, { capture:false });
   });
 
-  for (const elc of [el, input, minus, plus]) {
+  for (const elc of [el, input, minus, plus, alignButtons.left, alignButtons.center, alignButtons.right, fontSel]) {
     ['pointerdown','mousedown'].forEach(type=>{
       elc.addEventListener(type, evt => { evt.stopPropagation(); }, { capture: true });
     });
@@ -575,12 +658,45 @@ function ensureFSWidget(){
     const host = canvasLike?.parentElement || canvasLike || document.body;
     if (el.parentNode !== host) host.appendChild(el);
 
-    if (!targetShape || targetShape.shape !== 'text'){ // show even while editing if you want
+    // Hide if text tool isn't active or canvas/host is hidden
+    if (!bindState?.state || bindState.state.tool !== 'text' || !host || (host instanceof HTMLElement && host.offsetParent === null)){
       el.style.display = 'none'; currentShape = null; return;
     }
+
+    if (!targetShape || targetShape.shape !== 'text'){ // hide if no active text
+      el.style.display = 'none'; currentShape = null; return;
+    }
+    // Hide if text bbox is offscreen (not visible in current view)
+    try {
+      const view = visibleWorldRect(camera, canvasLike);
+      const bb = targetShape.bbox || null;
+      if (!bb || !rectsIntersect(bb, view)) { el.style.display = 'none'; currentShape = null; return; }
+    } catch {}
     currentShape = targetShape;
     const px = Math.round((currentShape.fontSize || (24 / Math.max(1e-8, camera.scale))) * camera.scale);
     if (document.activeElement !== input) input.value = px;
+    // reflect font selection
+    try {
+      if (fontSel) {
+        const fam = String(currentShape.fontFamily || 'system-ui,-apple-system,Segoe UI,Roboto,sans-serif');
+        let found = false;
+        for (const opt of Array.from(fontSel.options)) { if (opt.value === fam) { found = true; break; } }
+        if (!found) { const o = document.createElement('option'); o.value = fam; o.textContent = fam.length>36? fam.slice(0,34)+'�' : fam; fontSel.appendChild(o); }
+        fontSel.value = fam;
+      }
+    } catch {}
+    // reflect alignment
+    try {
+      const al = currentShape.align || 'center';
+      if (alignButtons) {
+        for (const k of Object.keys(alignButtons)) {
+          const btn = alignButtons[k]; if (!btn) continue;
+          btn.style.outline = (k === al) ? '2px solid #3a7afe' : 'none';
+          btn.style.outlineOffset = (k === al) ? '1px' : '0';
+          btn.style.background = (k === al) ? '#0f131a' : '#15181f';
+        }
+      }
+    } catch {}
     const w = rightMidWorldOfText(currentShape);
     const sp = camera.worldToScreen(w);
     const rect = host.getBoundingClientRect();
@@ -600,9 +716,9 @@ function drawSelectionHandlesRotatedText(ctx, s, camera, theme, dpr) {
   const cx = (x0 + x1) * 0.5, cy = (y0 + y1) * 0.5;
 
   const px = 1 / Math.max(1e-8, dpr * camera.scale);
-  const HANDLE_RADIUS_PX = 5;
-  const ROT_OFFSET_PX    = 28;
-  const LEADER_GAP_PX    = 10;
+  let HANDLE_RADIUS_PX = 5;     
+  const ROT_OFFSET_PX    = 28;   
+  const LEADER_GAP_PX    = 10;       
 
   const r  = HANDLE_RADIUS_PX * px;           // handle radius in world units
   const lw = Math.max(px, 0.75 * px);         // stroke width in world units
@@ -626,20 +742,29 @@ function drawSelectionHandlesRotatedText(ctx, s, camera, theme, dpr) {
   ctx.stroke();
   ctx.restore();
 
-  // handles (8)
-  ctx.lineWidth   = lw;
-  ctx.strokeStyle = theme.handleStroke;
-  ctx.fillStyle   = theme.handleFill;
-  const points = [
-    [lx, ly],   [0,  ly],   [rx, ly],
-    [rx, 0],                [rx, by],
-    [0,  by],   [lx, by],   [lx, 0]
+  // handles (8) with hover highlight
+  const handlePoints = [
+    ['nw', lx, ly], ['n', 0,  ly], ['ne', rx, ly],
+    ['e',  rx, 0],               ['se', rx, by],
+    ['s',  0,  by], ['sw', lx, by], ['w',  lx, 0]
   ];
-  for (const [x, y] of points) {
+  for (const [key, x, y] of handlePoints) {
+    const isHover = s && s._hoverHandle === key;
     ctx.beginPath();
+    const prevFill = ctx.fillStyle, prevStroke = ctx.strokeStyle, prevLW = ctx.lineWidth;
+    if (isHover) {
+      ctx.fillStyle = theme.handleHoverFill || '#3a7afe';
+      ctx.strokeStyle = theme.handleHoverStroke || '#dce6ff';
+      ctx.lineWidth = Math.max(px*1.25, 1.5*px);
+    } else {
+      ctx.strokeStyle = theme.handleStroke;
+      ctx.fillStyle   = theme.handleFill;
+      ctx.lineWidth   = lw;
+    }
     ctx.arc(x, y, r, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
+    if (isHover) { ctx.fillStyle = prevFill; ctx.strokeStyle = prevStroke; ctx.lineWidth = prevLW; }
   }
 
   // rotation handle + leader
@@ -651,10 +776,22 @@ function drawSelectionHandlesRotatedText(ctx, s, camera, theme, dpr) {
   ctx.lineTo(0, rotY);
   ctx.stroke();
 
-  ctx.beginPath();
-  ctx.arc(0, rotY, r, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.stroke();
+  {
+    const isHover = s && s._hoverHandle === 'rot';
+    const prevFill = ctx.fillStyle, prevStroke = ctx.strokeStyle, prevLW = ctx.lineWidth;
+    if (isHover) {
+      ctx.fillStyle = theme.handleHoverFill || '#3a7afe';
+      ctx.strokeStyle = theme.handleHoverStroke || '#dce6ff';
+      ctx.lineWidth = Math.max(px*1.25, 1.5*px);
+    }
+    ctx.beginPath();
+    ctx.arc(0, rotY, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    if (isHover) { ctx.fillStyle = prevFill; ctx.strokeStyle = prevStroke; ctx.lineWidth = prevLW; }
+  }
+
+  
 
   // arrow accent
   try {
@@ -667,6 +804,27 @@ function drawSelectionHandlesRotatedText(ctx, s, camera, theme, dpr) {
     ctx.stroke();
     ctx.restore();
   } catch {}
+
+  // move handle at 45� from top-right corner (text only)
+  if (s && s.shape === 'text') {
+    try {
+      ctx.beginPath();
+      const diag = (ROT_OFFSET_PX * px) / Math.SQRT2;
+      const mvx = rx + diag;
+      const mvy = ly - diag;
+      const isHover = s && s._hoverHandle === 'move';
+      const prevFill = ctx.fillStyle, prevStroke = ctx.strokeStyle, prevLW = ctx.lineWidth;
+      if (isHover) {
+        ctx.fillStyle = theme.handleHoverFill || '#3a7afe';
+        ctx.strokeStyle = theme.handleHoverStroke || '#dce6ff';
+        ctx.lineWidth = Math.max(px*1.25, 1.5*px);
+      }
+      ctx.arc(mvx, mvy, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      if (isHover) { ctx.fillStyle = prevFill; ctx.strokeStyle = prevStroke; ctx.lineWidth = prevLW; }
+    } catch {}
+  }
 
   ctx.restore();
 }
@@ -866,22 +1024,25 @@ function getLODView(stroke, camera, fast, state) {
   }
 }
 
-function drawSelectionHandles(ctx, bb, camera, theme, dpr) {
+function drawSelectionHandles(ctx, bb, camera, theme, dpr, hoverKey = null, showMove = false) {
   const x0 = bb.minx, y0 = bb.miny, x1 = bb.maxx, y1 = bb.maxy;
   const cx = (x0 + x1) * 0.5;
   const px = 1 / Math.max(1e-8, dpr * camera.scale);
-  const HANDLE_RADIUS_PX = 5;     
+  let HANDLE_RADIUS_PX = 5;     
   const ROT_OFFSET_PX    = 28;   
   const LEADER_GAP_PX    = 10;       
 
+  // Dynamic pixel radius: larger when zoomed out
+  const grow = (camera.scale < 1) ? Math.min(2.0, 1 + (1 - camera.scale) * 0.75) : 1;
+  HANDLE_RADIUS_PX *= grow;
   const r   = HANDLE_RADIUS_PX * px;
   const lw  = Math.max(px, 0.75 * px);
 
-  // 8 resize handles
+  // 8 resize handles (with keys)
   const points = [
-    [x0, y0],  [cx, y0],  [x1, y0],
-    [x1, (y0+y1)/2],      [x1, y1],
-    [cx, y1],  [x0, y1],  [x0, (y0+y1)/2]
+    ['nw', x0, y0], ['n',  cx, y0], ['ne', x1, y0],
+    ['e',  x1, (y0+y1)/2], ['se', x1, y1],
+    ['s',  cx, y1], ['sw', x0, y1], ['w',  x0, (y0+y1)/2]
   ];
 
   ctx.save();
@@ -889,26 +1050,62 @@ function drawSelectionHandles(ctx, bb, camera, theme, dpr) {
   ctx.strokeStyle = theme.handleStroke || '#b6c2cf';
   ctx.fillStyle   = theme.handleFill   || 'rgba(17,20,24,0.85)';
 
-  for (const [x,y] of points) {
+  for (const [key,x,y] of points) {
     ctx.beginPath();
+    const isHover = !!hoverKey && hoverKey === key;
+    const prevFill = ctx.fillStyle, prevStroke = ctx.strokeStyle, prevLW = ctx.lineWidth;
+    if (isHover) {
+      ctx.fillStyle = theme.handleHoverFill || '#3a7afe';
+      ctx.strokeStyle = theme.handleHoverStroke || '#dce6ff';
+      ctx.lineWidth = Math.max(px*1.25, 1.5*px);
+    }
     ctx.arc(x, y, r, 0, Math.PI*2);
     ctx.fill();
     ctx.stroke();
+    if (isHover) { ctx.fillStyle = prevFill; ctx.strokeStyle = prevStroke; ctx.lineWidth = prevLW; }
   }
 
+  // move handle at 45� from top-right corner
+  if (showMove) {
+  try {
+    ctx.beginPath();
+    const diag = (ROT_OFFSET_PX * px) / Math.SQRT2;
+    const mvx = x1 + diag;
+    const mvy = y0 - diag;
+    const isHover = !!hoverKey && hoverKey === 'move';
+    const prevFill = ctx.fillStyle, prevStroke = ctx.strokeStyle, prevLW = ctx.lineWidth;
+    if (isHover) {
+      ctx.fillStyle = theme.handleHoverFill || '#3a7afe';
+      ctx.strokeStyle = theme.handleHoverStroke || '#dce6ff';
+      ctx.lineWidth = Math.max(px*1.25, 1.5*px);
+    }
+    ctx.arc(mvx, mvy, r, 0, Math.PI*2);
+    ctx.fill();
+    ctx.stroke();
+    if (isHover) { ctx.fillStyle = prevFill; ctx.strokeStyle = prevStroke; ctx.lineWidth = prevLW; }
+  } catch {}
+  }
+  // rotation handle + leader (axis-aligned)
   const rotY = y0 - ROT_OFFSET_PX * px;
   const leadStartY = y0 - LEADER_GAP_PX * px;
-
-  // Leader
   ctx.beginPath();
   ctx.moveTo(cx, leadStartY);
   ctx.lineTo(cx, rotY);
   ctx.stroke();
-
-  ctx.beginPath();
-  ctx.arc(cx, rotY, r, 0, Math.PI*2);
-  ctx.fill();
-  ctx.stroke();
+  {
+    const isHover = !!hoverKey && hoverKey === 'rot';
+    const prevFill = ctx.fillStyle, prevStroke = ctx.strokeStyle, prevLW = ctx.lineWidth;
+    if (isHover) {
+      ctx.fillStyle = theme.handleHoverFill || '#3a7afe';
+      ctx.strokeStyle = theme.handleHoverStroke || '#dce6ff';
+      ctx.lineWidth = Math.max(px*1.25, 1.5*px);
+    }
+    ctx.beginPath();
+    ctx.arc(cx, rotY, r, 0, Math.PI*2);
+    ctx.fill();
+    ctx.stroke();
+    if (isHover) { ctx.fillStyle = prevFill; ctx.strokeStyle = prevStroke; ctx.lineWidth = prevLW; }
+  }
 
   try {
     ctx.save();
@@ -986,11 +1183,6 @@ export function render(state, camera, ctx, canvasLike, opts = {}) {
           const s = state.strokes[i];
           if (s && s.shape === 'text' && s.editing) { target = s; break; }
         }
-      }
-      // 2) otherwise fallback to single selected text (selection mode)
-      if (!target && state.selection && state.selection.size === 1) {
-        const only = Array.from(state.selection)[0];
-        if (only && only.shape === 'text') target = only;
       }
       fsw.update(target, camera, canvasLike);
     } catch {}
@@ -1153,6 +1345,11 @@ export function render(state, camera, ctx, canvasLike, opts = {}) {
         } else {
           const viewInStrokeSpace = unbaked ? invXformBBox(view, bake.s, bake.tx, bake.ty) : view;
           let vr = computeVisibleRange(s, viewInStrokeSpace, Math.max(1, ctx.lineWidth) * 2);
+          // Guard against stale/mismatched chunk indices
+          const nPts = Math.max(0, Math.floor(n / STRIDE));
+          if (vr && (!Number.isFinite(vr.i0) || !Number.isFinite(vr.i1) || vr.i0 < 0 || vr.i1 < 0 || vr.i0 > vr.i1 || vr.i1 >= nPts)) {
+            vr = null;
+          }
           ctx.beginPath();
           if (!vr) {
             s._chunks = null;
@@ -1223,7 +1420,8 @@ export function render(state, camera, ctx, canvasLike, opts = {}) {
         ctx.stroke();
       }
     } else if (s.kind === 'shape') {
-      if (!fast && s.brush === 'glow' && s.mode !== 'erase') {
+      // Avoid double-drawing text shapes for glow; drawTextBoxWorld handles styling
+      if (!fast && s.brush === 'glow' && s.mode !== 'erase' && s.shape !== 'text') {
         const sa = ctx.globalAlpha, lw = ctx.lineWidth;
         ctx.globalAlpha = Math.min(1, sa * 0.6);
         ctx.lineWidth = lw * 1.8;
@@ -1303,7 +1501,7 @@ if (state.selection && state.selection.size) {
       const w = bb.maxx - bb.minx, h = bb.maxy - bb.miny;
       ctx.beginPath(); ctx.rect(x, y, w, h); ctx.fill(); ctx.stroke();
       ctx.restore();
-      drawSelectionHandles(ctx, bb, camera, theme, dpr);
+      drawSelectionHandles(ctx, bb, camera, theme, dpr, (only && only._hoverHandle) || state._hoverHandle || null, (only && only.shape === 'text'));
 
       // Label (same as before)
       const wPx = Math.max(0, Math.round(w * camera.scale));
@@ -1370,7 +1568,7 @@ if (state.selection && state.selection.size) {
       const w = bb.maxx - bb.minx, h = bb.maxy - bb.miny;
       ctx.beginPath(); ctx.rect(x, y, w, h); ctx.fill(); ctx.stroke();
       ctx.restore();
-      drawSelectionHandles(ctx, bb, camera, theme, dpr);
+      drawSelectionHandles(ctx, bb, camera, theme, dpr, state._hoverHandle || null, false);
 
       // label
       const wPx = Math.max(0, Math.round(w * camera.scale));
@@ -1467,3 +1665,7 @@ if (state.selection && state.selection.size) {
 
   return { visible: visibleCount, tiles, complete: true };
 }
+
+
+
+

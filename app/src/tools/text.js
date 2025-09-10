@@ -18,7 +18,7 @@ const ROT_OFFSET_PX      = 28;
 
 function scrPxToWorld(px, camera){ return px / Math.max(1e-8, camera.scale); }
 
-// rotate a point p around c by -theta (to bring world → local box space)
+// rotate a point p around c by -theta (to bring world â†’ local box space)
 function invRotateAround(p, c, theta){
   if (!theta) return { x: p.x, y: p.y };
   const s = Math.sin(-theta), co = Math.cos(-theta);
@@ -58,7 +58,7 @@ function hitHandleRotAware(worldPt, s, camera){
   const bb = bboxOf(s);
   const c  = { x:(bb.minx+bb.maxx)/2, y:(bb.miny+bb.maxy)/2 };
   const p  = invRotateAround(worldPt, c, s.rotation||0);
-  const r  = handleWorldRadius(camera);
+  const r  = handleWorldRadius(camera, 14); // slightly larger for easier grabbing
 
   const corners = {
     nw: { x:bb.minx, y:bb.miny },
@@ -77,6 +77,13 @@ function hitHandleRotAware(worldPt, s, camera){
   const rot = invRotateAround(rotWorld, c, s.rotation||0);
   const drx = p.x - rot.x, dry = p.y - rot.y;
   if ((drx*drx + dry*dry) <= (r*r)) return 'rot';
+
+  // Optional move handle at 45deg from top-right corner (axis-aligned)
+  const moveOffset = (ROT_OFFSET_PX / Math.max(1e-8, camera.scale)) / Math.SQRT2;
+  const moveWorld = { x: bb.maxx + moveOffset, y: bb.miny - moveOffset };
+  const mv = invRotateAround(moveWorld, c, s.rotation||0);
+  const dmx = p.x - mv.x, dmy = p.y - mv.y;
+  if ((dmx*dmx + dmy*dmy) <= (r*r)) return 'move';
 
   const all = { ...corners, ...mids };
   for (const [k, q] of Object.entries(all)) {
@@ -244,11 +251,19 @@ function layoutTextAndGrow(s, camera, ctx, caretBlinkOn){
     const w  = Math.abs(s.end.x - s.start.x);
     const lineWidthPx = s._lineWidths?.[line] || 0;
     const scale = Math.max(1e-8, camera.scale);
-    const centerWorld = x0 + w/2;
-    const leftEdgeWorld = centerWorld - (lineWidthPx / scale) * 0.5;
+    const align = s.align || 'center';
+    let leftEdgeWorld;
+    if (align === 'left') {
+      leftEdgeWorld = x0 + pad;
+    } else if (align === 'right') {
+      leftEdgeWorld = (x0 + w) - pad - (lineWidthPx / scale);
+    } else {
+      const centerWorld = x0 + w/2;
+      leftEdgeWorld = centerWorld - (lineWidthPx / scale) * 0.5;
+    }
     const xWorld = leftEdgeWorld + (leftPx / scale);
     const yWorld = y0 + pad + line * lineH;
-    s._caret = { x: xWorld, y: yWorld, h: lineH };
+  s._caret = { x: xWorld, y: yWorld, h: lineH };
   }
 }
 
@@ -314,6 +329,8 @@ export class TextTool {
     this._rotAngle0 = 0;
     this._grabLocalFromCenter = null; // local grab vector (relative to center)
     this._half = null;                // half extents captured at pointer-down
+    this._selecting = false;
+    this._selAnchor = null;
 
     // caret blink
     this._blinkOn = true;
@@ -326,12 +343,31 @@ export class TextTool {
     this._offscreen = document.createElement('canvas');
     this._ctx = this._offscreen.getContext('2d');
 
-    // clicking outside the canvas ends edit
+    // clicking outside the canvas ends edit; clicking empty canvas (left-click) also ends edit
     this._onDocPointerDown = (e) => {
+      // Only respond when Text tool is active
+      if (this.state?.tool !== 'text') return;
       const withinCanvas = (e.target === this.canvas) || e.target.closest?.('canvas');
-      // NEW: allow clicks on Deep-Canvas UI widgets (e.g. font-size pill)
       const withinUi = e.target.closest?.('[data-dc-ui="true"]');
-      if (!withinCanvas && !withinUi && this._active) this._finishEditing(true);
+      // Click outside canvas/UI: end editing (confirm delete if empty)
+      if (!withinCanvas && !withinUi && this._active) { this._finishEditing(true); return; }
+      // Left-click on empty canvas (not UI, not on text/handles): end editing (but don't auto-delete)
+      if (withinCanvas && !withinUi && e.button === 0 && this._active) {
+        try {
+          const r = this.canvas.getBoundingClientRect();
+          const screen = { x: e.clientX - r.left, y: e.clientY - r.top };
+          const world  = this.camera.screenToWorld(screen);
+          const s = this._active;
+          const h = hitHandleRotAware(world, s, this.camera);
+          if (h) return; // let handle interactions proceed
+          const bb = bboxOf(s);
+          const c  = { x:(bb.minx+bb.maxx)/2, y:(bb.miny+bb.maxy)/2 };
+          const lp = invRotateAround(world, c, s.rotation||0);
+          if (pointInRect(lp, bb)) return; // inside text box: let caret/selection proceed
+          // Empty canvas click: finish editing (non-destructive)
+          this._finishEditing(false);
+        } catch {}
+      }
     };
     document.addEventListener('pointerdown', this._onDocPointerDown, { capture: true });
 
@@ -343,6 +379,23 @@ export class TextTool {
 
     // track original text for a single coalesced history entry
     this._sessionTextBefore = null;
+    // in-session text edit undo/redo stacks
+    this._editUndo = [];
+    this._editRedo = [];
+
+    // Create on double-click anywhere on the canvas when Text tool is active
+    this._onCanvasDblClick = (e) => {
+      if (this.state?.tool !== 'text') return;
+      try { e.preventDefault(); } catch {}
+      const r = this.canvas.getBoundingClientRect();
+      const screen = { x: e.clientX - r.left, y: e.clientY - r.top };
+      const world  = this.camera.screenToWorld(screen);
+      try { this._finishEditing(true); } catch {}
+      const s = this._newTextShapeAt(world);
+      this._beginEditing(s);
+      scheduleRender();
+    };
+    this.canvas.addEventListener('dblclick', this._onCanvasDblClick, { capture:false });
   }
 
   _setCursor(c){ try{ this.canvas.style.cursor=c; }catch{} }
@@ -351,6 +404,7 @@ export class TextTool {
            h==='e'||h==='w' ? 'ew-resize' :
            h==='ne'||h==='sw'? 'nesw-resize' :
            h==='nw'||h==='se'? 'nwse-resize' :
+           h==='move'        ? 'move' :
            h==='rot'          ? 'grab' :
            this._active ? 'text' : 'crosshair';
   }
@@ -359,6 +413,7 @@ export class TextTool {
     document.removeEventListener('pointerdown', this._onDocPointerDown, { capture: true });
     window.removeEventListener('keydown', this._onKeyDown, { capture: true });
     window.removeEventListener('paste',   this._onPaste,   { capture: true });
+    try { this.canvas.removeEventListener('dblclick', this._onCanvasDblClick, { capture:false }); } catch {}
     clearInterval(this._blinkTimer);
   }
 
@@ -367,8 +422,13 @@ export class TextTool {
     if (!shape) return;
     shape.editing = true;
     shape.caret = (typeof shape.caret === 'number') ? shape.caret : (shape.text||'').length;
+    shape.selStart = shape.caret;
+    shape.selEnd   = shape.caret;
     try { this.state.selection.clear(); this.state.selection.add(shape); } catch {}
     this._active = shape;
+    // reset per-session undo/redo and seed initial snapshot
+    this._editUndo = [{ text: String(shape.text||''), caret: shape.caret||0 }];
+    this._editRedo = [];
     // snapshot original text for undo/redo
     this._sessionTextBefore = String(shape.text || '');
     layoutTextAndGrow(shape, this.camera, this._ctx, this._blinkOn);
@@ -382,6 +442,7 @@ export class TextTool {
     }
     s.editing = false;
     s.pipeLines = null;
+    s.selStart = s.selEnd = s.caret ?? 0;
     try { this.state.selection.clear(); } catch {}
     // If content changed, push a single history mutation for the session
     try {
@@ -397,6 +458,9 @@ export class TextTool {
     this._mode = null; this._handle = null;
     this._dragMove = null; this._before = null;
     this._sessionTextBefore = null;
+    // clear per-session stacks
+    this._editUndo = [];
+    this._editRedo = [];
     scheduleRender();
   }
 
@@ -421,7 +485,7 @@ export class TextTool {
     s.text        = '';
     s.fontFamily  = s.fontFamily || 'system-ui,-apple-system,Segoe UI,Roboto,sans-serif';
     s.fontSize    = fsWorld;        // fixed size (no autosize)
-    s.lineHeight  = lhMul;          // × fontSize
+    s.lineHeight  = lhMul;          // Ã— fontSize
     s.rotation    = s.rotation || 0;
     s.caret       = 0;
 
@@ -448,8 +512,16 @@ export class TextTool {
     setCtxFont(this._ctx, s, this.camera);
     const text = s.lines[line] || '';
     const lineWidthPx = measure(this._ctx, text);
-    const centerWorld = bb.minx + wBox/2;
-    const leftEdgeWorld = centerWorld - (lineWidthPx / scale) * 0.5;
+    const align = s.align || 'center';
+    let leftEdgeWorld;
+    if (align === 'left') {
+      leftEdgeWorld = bb.minx + pad;
+    } else if (align === 'right') {
+      leftEdgeWorld = (bb.minx + wBox) - pad - (lineWidthPx / scale);
+    } else {
+      const centerWorld = bb.minx + wBox/2;
+      leftEdgeWorld = centerWorld - (lineWidthPx / scale) * 0.5;
+    }
     let xPx = (lp.x - leftEdgeWorld) * scale;
     // clamp to [0, lineWidthPx]
     if (!Number.isFinite(xPx)) xPx = 0;
@@ -459,7 +531,7 @@ export class TextTool {
     let col = 0;
     for (let i = 0; i <= text.length; i++) {
       const wPx = measure(this._ctx, text.slice(0, i));
-      if (xPx <= wPx) { col = i - 1; break; }
+      if (xPx <= wPx) { col = i; break; }
       col = i;
     }
     // clamp into valid range
@@ -469,12 +541,55 @@ export class TextTool {
     layoutTextAndGrow(s, this.camera, this._ctx, this._blinkOn);
   }
 
+  _caretIndexFromPoint(worldPt){
+    const s = this._active; if (!s) return 0;
+    const bb = bboxOf(s);
+    const cx = (bb.minx+bb.maxx)/2, cy = (bb.miny+bb.maxy)/2;
+    const lp = invRotateAround(worldPt, {x:cx,y:cy}, s.rotation||0);
+    const fs = s.fontSize || scrPxToWorld(DEFAULT_FS_SCR, this.camera);
+    const pad = 0.25 * fs;
+    const lineH = (s.lineHeight || 1.25) * fs;
+    const scale = Math.max(1e-8, this.camera.scale);
+    const yLocal = lp.y - Math.min(s.start.y, s.end.y) - pad;
+    const line = Math.max(0, Math.min((s.lines||[]).length-1, Math.floor(yLocal / lineH)));
+    setCtxFont(this._ctx, s, this.camera);
+    const text = (s.lines||[])[line] || '';
+    const lineWidthPx = this._ctx.measureText(text).width;
+    const wBox = Math.abs(s.end.x - s.start.x);
+    const align = s.align || 'center';
+    const xLeftWorld = Math.min(s.start.x, s.end.x);
+    let leftEdgeWorld;
+    if (align === 'left') {
+      leftEdgeWorld = xLeftWorld + pad;
+    } else if (align === 'right') {
+      leftEdgeWorld = xLeftWorld + wBox - pad - (lineWidthPx / scale);
+    } else {
+      const centerWorld = xLeftWorld + wBox/2;
+      leftEdgeWorld = centerWorld - (lineWidthPx / scale) * 0.5;
+    }
+    let xPx = (lp.x - leftEdgeWorld) * scale;
+    if (!Number.isFinite(xPx)) xPx = 0;
+    xPx = Math.max(0, Math.min(lineWidthPx, xPx));
+    let col = 0;
+    for (let i = 0; i <= text.length; i++) {
+      const wPx = this._ctx.measureText(text.slice(0, i)).width;
+      if (xPx <= wPx) { col = i; break; }
+      col = i;
+    }
+    return lineColToIndex(s, line, Math.max(0, Math.min(text.length, col)));
+  }
+
   _insertAtCaret(txt){
     const s = this._active; if (!s) return;
+    this._pushEditSnapshot();
     const t = String(s.text || '');
-    const i = Math.max(0, Math.min(t.length, s.caret ?? t.length));
-    s.text = t.slice(0, i) + txt + t.slice(i);
+    // replace selection if present
+    const sel = this._deleteSelectionIfAny();
+    const i = (sel != null) ? sel : Math.max(0, Math.min(t.length, s.caret ?? t.length));
+    const cur = String(s.text || '');
+    s.text = cur.slice(0, i) + txt + cur.slice(i);
     s.caret = i + txt.length;
+    s.selStart = s.selEnd = s.caret;
     this._blinkOn = true;
     layoutTextAndGrow(s, this.camera, this._ctx, this._blinkOn);
     markDirty(); scheduleRender();
@@ -483,25 +598,107 @@ export class TextTool {
   _backspace(){
     const s = this._active; if (!s) return;
     const t = String(s.text || ''); if (!t) return;
-    const i = Math.max(0, Math.min(t.length, s.caret ?? t.length));
-    if (i === 0) return;
-    s.text = t.slice(0, i-1) + t.slice(i);
-    s.caret = i-1;
+    this._pushEditSnapshot();
+    if (this._deleteSelectionIfAny() != null) {
+      // selection deleted; caret already set
+    } else {
+      const i = Math.max(0, Math.min(t.length, s.caret ?? t.length));
+      if (i === 0) return;
+      s.text = t.slice(0, i-1) + t.slice(i);
+      s.caret = i-1;
+      s.selStart = s.selEnd = s.caret;
+    }
     layoutTextAndGrow(s, this.camera, this._ctx, this._blinkOn);
     markDirty(); scheduleRender();
   }
   _delForward(){
     const s = this._active; if (!s) return;
     const t = String(s.text || ''); if (!t) return;
-    const i = Math.max(0, Math.min(t.length, s.caret ?? t.length));
-    if (i >= t.length) return;
-    s.text = t.slice(0, i) + t.slice(i+1);
+    this._pushEditSnapshot();
+    if (this._deleteSelectionIfAny() != null) {
+      // selection deleted
+    } else {
+      const i = Math.max(0, Math.min(t.length, s.caret ?? t.length));
+      if (i >= t.length) return;
+      s.text = t.slice(0, i) + t.slice(i+1);
+      s.selStart = s.selEnd = s.caret;
+    }
     layoutTextAndGrow(s, this.camera, this._ctx, this._blinkOn);
     markDirty(); scheduleRender();
   }
 
+  _deleteSelectionIfAny(){
+    const s = this._active; if (!s) return null;
+    let a = Number.isFinite(s.selStart) ? s.selStart : s.caret||0;
+    let b = Number.isFinite(s.selEnd)   ? s.selEnd   : s.caret||0;
+    if (a === b) return null;
+    if (a > b) { const tmp = a; a = b; b = tmp; }
+    const t = String(s.text || '');
+    a = Math.max(0, Math.min(t.length, a));
+    b = Math.max(0, Math.min(t.length, b));
+    s.text = t.slice(0, a) + t.slice(b);
+    s.caret = a;
+    s.selStart = s.selEnd = s.caret;
+    return a;
+  }
+
+  _pushEditSnapshot(){
+    const s = this._active; if (!s) return;
+    try {
+      const last = this._editUndo[this._editUndo.length-1];
+      const cur = { text: String(s.text||''), caret: s.caret||0 };
+      if (!last || last.text !== cur.text || last.caret !== cur.caret) {
+        this._editUndo.push(cur);
+      }
+      this._editRedo.length = 0; // clear redo on new edit
+    } catch {}
+  }
+  _undoEdit(){
+    const s = this._active; if (!s) return;
+    if (!this._editUndo || this._editUndo.length <= 1) return; // keep initial
+    const cur = { text: String(s.text||''), caret: s.caret||0 };
+    const prev = this._editUndo[this._editUndo.length - 2];
+    this._editRedo.push(cur);
+    this._editUndo.pop();
+    s.text = prev.text; s.caret = prev.caret;
+    layoutTextAndGrow(s, this.camera, this._ctx, this._blinkOn);
+    markDirty(); scheduleRender();
+  }
+  _redoEdit(){
+    const s = this._active; if (!s) return;
+    const nxt = this._editRedo && this._editRedo.pop();
+    if (!nxt) return;
+    // push current into undo
+    this._editUndo.push({ text: String(s.text||''), caret: s.caret||0 });
+    s.text = nxt.text; s.caret = nxt.caret;
+    layoutTextAndGrow(s, this.camera, this._ctx, this._blinkOn);
+    markDirty(); scheduleRender();
+  }
+  async _copyEdit(){
+    const s = this._active; if (!s) return;
+    let text = String(s.text || '');
+    try {
+      let a = Number.isFinite(s.selStart) ? s.selStart : s.caret||0;
+      let b = Number.isFinite(s.selEnd)   ? s.selEnd   : s.caret||0;
+      if (a !== b) { if (a>b) { const t=a;a=b;b=t; } text = text.slice(a, b); }
+    } catch {}
+    try {
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const ta = document.createElement('textarea');
+        ta.value = text; ta.style.position='fixed'; ta.style.left='-9999px';
+        document.body.appendChild(ta); ta.select();
+        try { document.execCommand('copy'); } catch {}
+        document.body.removeChild(ta);
+      }
+    } catch {}
+  }
+
   // ---- keyboard ----
   _handleKeyDown(e){
+    // Only respond when Text tool is active
+    if (this.state?.tool !== 'text') return;
     const tgt = e.target;
     const ae  = document.activeElement;
     const inUi =
@@ -525,14 +722,29 @@ export class TextTool {
     if (!this._active) return;
 
     if (e.metaKey || e.ctrlKey){
-      // support Ctrl/Cmd+A selection-like: move caret to start/end
-      if (e.key.toLowerCase() === 'a'){ e.preventDefault(); this._active.caret = 0; layoutTextAndGrow(this._active, this.camera, this._ctx, this._blinkOn); scheduleRender(); }
+      const k = e.key.toLowerCase();
+      if (k === 'a'){ e.preventDefault(); const s=this._active; const L=(s.text||'').length; s.selStart=0; s.selEnd=L; s.caret=L; layoutTextAndGrow(s,this.camera,this._ctx,this._blinkOn); scheduleRender(); return; }
+      if (k === 'c'){ e.preventDefault(); e.stopPropagation(); this._copyEdit(); return; }
+      if (k === 'x'){ e.preventDefault(); e.stopPropagation(); (async()=>{ await this._copyEdit(); this._pushEditSnapshot(); this._deleteSelectionIfAny() ?? (this._active.text=''); layoutTextAndGrow(this._active,this.camera,this._ctx,this._blinkOn); markDirty(); scheduleRender(); })(); return; }
+      if (k === 'z'){ e.preventDefault(); e.stopPropagation(); if (e.shiftKey) this._redoEdit(); else this._undoEdit(); return; }
+      if (k === 'y'){ e.preventDefault(); e.stopPropagation(); this._redoEdit(); return; }
+      // Let Ctrl/Cmd+V fall through to paste handler
       return;
     }
 
     // navigation
-    if (e.key === 'ArrowLeft'){ e.preventDefault(); this._active.caret = Math.max(0, (this._active.caret||0)-1); layoutTextAndGrow(this._active, this.camera, this._ctx, this._blinkOn); scheduleRender(); return; }
-    if (e.key === 'ArrowRight'){ e.preventDefault(); this._active.caret = Math.min((this._active.text||'').length, (this._active.caret||0)+1); layoutTextAndGrow(this._active, this.camera, this._ctx, this._blinkOn); scheduleRender(); return; }
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight'){
+      e.preventDefault();
+      const s = this._active; const len = (s.text||'').length; const cur = s.caret||0;
+      const next = (e.key==='ArrowLeft') ? Math.max(0, cur-1) : Math.min(len, cur+1);
+      if (e.shiftKey){
+        const anchor = (s.selStart!==s.selEnd) ? ( (s.selStart===cur) ? s.selEnd : s.selStart ) : cur;
+        s.caret = next; s.selStart = Math.min(anchor, next); s.selEnd = Math.max(anchor, next);
+      } else {
+        s.caret = next; s.selStart = s.selEnd = s.caret;
+      }
+      layoutTextAndGrow(s, this.camera, this._ctx, this._blinkOn); scheduleRender(); return;
+    }
     if (e.key === 'ArrowUp'){
       e.preventDefault();
       const s = this._active; const pos = caretLineColFromIndex(s, s.caret||0);
@@ -545,8 +757,17 @@ export class TextTool {
       const dn = Math.min((s.lines||[]).length-1, pos.line+1); s.caret = lineColToIndex(s, dn, pos.col);
       layoutTextAndGrow(s, this.camera, this._ctx, this._blinkOn); scheduleRender(); return;
     }
-    if (e.key === 'Home'){ e.preventDefault(); const s=this._active; const pos=caretLineColFromIndex(s,s.caret||0); s.caret=lineColToIndex(s,pos.line,0); layoutTextAndGrow(s,this.camera,this._ctx,this._blinkOn); scheduleRender(); return; }
-    if (e.key === 'End'){ e.preventDefault(); const s=this._active; const pos=caretLineColFromIndex(s,s.caret||0); s.caret=lineColToIndex(s,pos.line,(s.lines?.[pos.line]||'').length); layoutTextAndGrow(s,this.camera,this._ctx,this._blinkOn); scheduleRender(); return; }
+    if (e.key === 'Home' || e.key === 'End'){
+      e.preventDefault(); const s=this._active; const pos=caretLineColFromIndex(s,s.caret||0);
+      const homeIdx = lineColToIndex(s,pos.line,0);
+      const endIdx  = lineColToIndex(s,pos.line,(s.lines?.[pos.line]||'').length);
+      const dest = (e.key==='Home') ? homeIdx : endIdx;
+      if (e.shiftKey){
+        const anchor = (s.selStart!==s.selEnd) ? ( (s.selStart===s.caret) ? s.selEnd : s.selStart ) : s.caret;
+        s.caret = dest; s.selStart = Math.min(anchor, dest); s.selEnd = Math.max(anchor, dest);
+      } else { s.caret = dest; s.selStart = s.selEnd = s.caret; }
+      layoutTextAndGrow(s,this.camera,this._ctx,this._blinkOn); scheduleRender(); return;
+    }
 
     if (e.key === 'Enter')     { e.preventDefault(); this._newline(); return; }
     if (e.key === 'Backspace') { e.preventDefault(); this._backspace(); return; }
@@ -557,6 +778,8 @@ export class TextTool {
     if (e.key && e.key.length === 1) { e.preventDefault(); this._insertAtCaret(e.key); }
   }
   _handlePaste(e){
+    // Only respond when Text tool is active
+    if (this.state?.tool !== 'text') return;
     if (!this._active) return;
     // Don't paste into the text shape if the UI owns focus
     const tgt = e.target;
@@ -603,6 +826,19 @@ export class TextTool {
         try { this.canvas.setPointerCapture(e.pointerId); } catch {}
         this._setCursor('grabbing');
         return;
+      } else if (h === 'move'){
+        // Move via dedicated move-handle
+        this._mode = 'move';
+        this._handle = 'move';
+        const bb = bboxOf(s);
+        const c  = { x:(bb.minx+bb.maxx)/2, y:(bb.miny+bb.maxy)/2 };
+        const lp = invRotateAround(world, c, s.rotation||0);
+        this._before = snapshotGeometry(s);
+        this._half = { x:(bb.maxx-bb.minx)/2, y:(bb.maxy-bb.miny)/2 };
+        this._grabLocalFromCenter = { x: lp.x - c.x, y: lp.y - c.y };
+        try { this.canvas.setPointerCapture(e.pointerId); } catch {}
+        this._setCursor('move');
+        return;
       } else if (h){
         this._mode = 'scale';
         this._handle = h;
@@ -615,19 +851,71 @@ export class TextTool {
         const c  = { x:(bb.minx+bb.maxx)/2, y:(bb.miny+bb.maxy)/2 };
         const lp = invRotateAround(world, c, s.rotation||0);
         if (pointInRect(lp, bb)){
-          // place caret (edit in-between)
-          this._setCaretFromPoint(world);
-          // allow drag-move if user drags far enough
-          this._mode = 'move';
-          this._before = snapshotGeometry(s);
-          this._dragMove = { dx: lp.x - bb.minx, dy: lp.y - bb.miny };
-          this._grabLocalFromCenter = { x: lp.x - c.x, y: lp.y - c.y };
-          this._half = { x: (bb.maxx - bb.minx)/2, y: (bb.maxy - bb.miny)/2 };
-          try { this.canvas.setPointerCapture(e.pointerId); } catch {}
-          return;
+          if (e.altKey || e.metaKey) {
+            // Move the text box when Alt/Meta is held
+            this._mode = 'move';
+            this._handle = null;
+            this._before = snapshotGeometry(s);
+            this._half = { x:(bb.maxx-bb.minx)/2, y:(bb.maxy-bb.miny)/2 };
+            this._grabLocalFromCenter = { x: lp.x - c.x, y: lp.y - c.y };
+            try { this.canvas.setPointerCapture(e.pointerId); } catch {}
+            this._setCursor('move');
+            return;
+          } else {
+            // selection drag instead of box move
+            const idx = this._caretIndexFromPoint(world);
+            s.caret = idx;
+            if (e.shiftKey){
+              const anchor = Number.isFinite(s.selStart)&&Number.isFinite(s.selEnd)&&s.selStart!==s.selEnd ? (s.selStart===s.caret? s.selEnd : s.selStart) : (s.selStart ?? idx);
+              s.selStart = Math.min(anchor, idx); s.selEnd = Math.max(anchor, idx);
+            } else { s.selStart = s.selEnd = idx; }
+            this._selecting = true; this._selAnchor = s.selStart;
+            try { this.canvas.setPointerCapture(e.pointerId); } catch {}
+            layoutTextAndGrow(s, this.camera, this._ctx, this._blinkOn); scheduleRender();
+            return;
+          }
         }
-        // clicked elsewhere on canvas → confirm and hide
-        this._finishEditing(true);
+        // clicked elsewhere: try hitting any text handles before finishing
+        {
+          const arr = this.state.strokes || this.state.shapes || [];
+          for (let i = arr.length - 1; i >= 0; i--){
+            const t = arr[i];
+            if (!t || t.shape !== 'text') continue;
+            const hh = hitHandleRotAware(world, t, this.camera);
+            if (!hh) continue;
+            this._beginEditing(t);
+            if (hh === 'rot'){
+              this._mode = 'rotate';
+              this._handle = 'rot';
+              const bbx = bboxOf(t);
+              this._rotPivot = { x:(bbx.minx+bbx.maxx)/2, y:(bbx.miny+bbx.maxy)/2 };
+              this._rotAngle0 = Math.atan2(world.y - this._rotPivot.y, world.x - this._rotPivot.x);
+              this._before = snapshotGeometry(t);
+              try { this.canvas.setPointerCapture(e.pointerId); } catch {}
+              return;
+            } else if (hh === 'move'){
+              this._mode = 'move';
+              this._handle = 'move';
+              const bbx = bboxOf(t);
+              const c   = { x:(bbx.minx+bbx.maxx)/2, y:(bbx.miny+bbx.maxy)/2 };
+              const lp  = invRotateAround(world, c, t.rotation||0);
+              this._before = snapshotGeometry(t);
+              this._half = { x:(bbx.maxx-bbx.minx)/2, y:(bbx.maxy-bbx.miny)/2 };
+              this._grabLocalFromCenter = { x: lp.x - c.x, y: lp.y - c.y };
+              try { this.canvas.setPointerCapture(e.pointerId); } catch {}
+              this._setCursor('move');
+              return;
+            } else {
+              this._mode = 'scale';
+              this._handle = hh;
+              this._before = snapshotGeometry(t);
+              try { this.canvas.setPointerCapture(e.pointerId); } catch {}
+              return;
+            }
+          }
+        }
+        // nothing else hit → just end editing without deleting empty text
+        this._finishEditing(false);
       }
     }
 
@@ -647,6 +935,18 @@ export class TextTool {
         this._before = snapshotGeometry(hitText);
         try { this.canvas.setPointerCapture(e.pointerId); } catch {}
         return;
+      } else if (h === 'move'){
+        this._mode = 'move';
+        this._handle = 'move';
+        const bb = bboxOf(hitText);
+        const c  = { x:(bb.minx+bb.maxx)/2, y:(bb.miny+bb.maxy)/2 };
+        const lp = invRotateAround(world, c, hitText.rotation||0);
+        this._before = snapshotGeometry(hitText);
+        this._half = { x:(bb.maxx-bb.minx)/2, y:(bb.maxy-bb.miny)/2 };
+        this._grabLocalFromCenter = { x: lp.x - c.x, y: lp.y - c.y };
+        try { this.canvas.setPointerCapture(e.pointerId); } catch {}
+        this._setCursor('move');
+        return;
       } else if (h){
         this._mode = 'scale';
         this._handle = h;
@@ -655,16 +955,31 @@ export class TextTool {
         return;
       }
 
-      // Inside text (no handle): caret + prepare move
-      this._setCaretFromPoint(world);
-      this._mode = 'move';
-      this._before = snapshotGeometry(hitText);
-      const bb = bboxOf(hitText);
-      const c  = { x:(bb.minx+bb.maxx)/2, y:(bb.miny+bb.maxy)/2 };
-      const lp = invRotateAround(world, c, hitText.rotation||0);
-      this._dragMove = { dx: lp.x - bb.minx, dy: lp.y - bb.miny };
-      try { this.canvas.setPointerCapture(e.pointerId); } catch {}
-      return;
+      // Inside text (no handle): hold Alt/Meta to move, otherwise begin selection drag
+      const bb2 = bboxOf(hitText);
+      const c2  = { x:(bb2.minx+bb2.maxx)/2, y:(bb2.miny+bb2.maxy)/2 };
+      const lp2 = invRotateAround(world, c2, hitText.rotation||0);
+      if (e.altKey || e.metaKey) {
+        this._mode = 'move';
+        this._handle = null;
+        this._before = snapshotGeometry(hitText);
+        this._half = { x:(bb2.maxx-bb2.minx)/2, y:(bb2.maxy-bb2.miny)/2 };
+        this._grabLocalFromCenter = { x: lp2.x - c2.x, y: lp2.y - c2.y };
+        try { this.canvas.setPointerCapture(e.pointerId); } catch {}
+        this._setCursor('move');
+        return;
+      } else {
+        const idx = this._caretIndexFromPoint(world);
+        hitText.caret = idx;
+        if (e.shiftKey){
+          const anchor = Number.isFinite(hitText.selStart)&&Number.isFinite(hitText.selEnd)&&hitText.selStart!==hitText.selEnd ? (hitText.selStart===hitText.caret? hitText.selEnd : hitText.selStart) : (hitText.selStart ?? idx);
+          hitText.selStart = Math.min(anchor, idx); hitText.selEnd = Math.max(anchor, idx);
+        } else { hitText.selStart = hitText.selEnd = idx; }
+        this._selecting = true; this._selAnchor = hitText.selStart;
+        try { this.canvas.setPointerCapture(e.pointerId); } catch {}
+        layoutTextAndGrow(hitText, this.camera, this._ctx, this._blinkOn); scheduleRender();
+        return;
+      }
     }
 
     // --- If not inside any rect, scan ALL texts' handles before drafting new ---
@@ -687,6 +1002,18 @@ export class TextTool {
           this._before = snapshotGeometry(s);
           try { this.canvas.setPointerCapture(e.pointerId); } catch {}
           return;
+        } else if (h === 'move'){
+          this._mode = 'move';
+          this._handle = 'move';
+          const bb = bboxOf(s);
+          const c  = { x:(bb.minx+bb.maxx)/2, y:(bb.miny+bb.maxy)/2 };
+          const lp = invRotateAround(world, c, s.rotation||0);
+          this._before = snapshotGeometry(s);
+          this._half = { x:(bb.maxx-bb.minx)/2, y:(bb.maxy-bb.miny)/2 };
+          this._grabLocalFromCenter = { x: lp.x - c.x, y: lp.y - c.y };
+          try { this.canvas.setPointerCapture(e.pointerId); } catch {}
+          this._setCursor('move');
+          return;
         } else {
           this._mode = 'scale';
           this._handle = h;
@@ -697,17 +1024,15 @@ export class TextTool {
       }
     }
 
-    // --- Nothing hit at all → draft a new text box (existing behavior) ---
-    this._downWorld  = world;
-    this._downScreen = screen;
-    this._drafting   = true;
-    setDeferIndex(true);
-
-    const s = this._newTextShapeAt(world);
-    this._beginEditing(s);
-    try { this.canvas.setPointerCapture(e.pointerId); } catch {}
+    // --- Nothing hit at all ---
+    if ((e.detail || 0) >= 2) {
+      try { this._finishEditing(true); } catch {}
+      const s = this._newTextShapeAt(world);
+      this._beginEditing(s);
+      scheduleRender();
+      return;
+    }
   }
-
 
   onPointerMove(e){
     const r = this.canvas.getBoundingClientRect();
@@ -726,6 +1051,17 @@ export class TextTool {
       return;
     }
 
+    if (this._selecting && this._active){
+      // Only update selection while primary button is held
+      if (!(e.buttons & 1)) { this._selecting = false; this._selAnchor = null; return; }
+      const idx = this._caretIndexFromPoint(world);
+      const s = this._active;
+      s.caret = idx;
+      const anchor = Number.isFinite(this._selAnchor) ? this._selAnchor : (s.selStart ?? idx);
+      s.selStart = Math.min(anchor, idx); s.selEnd = Math.max(anchor, idx);
+      layoutTextAndGrow(s, this.camera, this._ctx, this._blinkOn); scheduleRender();
+      return;
+    }
     if (this._active && this._before){
       const s = this._active;
 
@@ -791,6 +1127,8 @@ export class TextTool {
 
   onPointerUp(e){
     if (e.button !== 0) return;
+    // End any selection drag
+    this._selecting = false; this._selAnchor = null;
     this._setCursor(this._cursorForHandle(this._hoverHandle));
 
     if (this._drafting){
@@ -851,13 +1189,16 @@ export class TextTool {
     try { this.state._transformActive = false; } catch {}
     this._sessionTextBefore = null;
     scheduleRender();
+    // Do not remove global listeners here; cancel() is used for pointer lifecycle and
+    // may be called while the Text tool remains active (e.g., lostpointercapture).
   }
 }
 
-// helper for toolbar “Delete Selected” button
+// helper for toolbar â€œDelete Selectedâ€ button
 export function deleteSelectedText(state){
   if (!state?.selection) return;
   const toDelete = Array.from(state.selection).filter(s => s.shape === 'text');
   for (const s of toDelete) removeStroke(state, s);
   markDirty(); scheduleRender();
 }
+

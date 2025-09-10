@@ -41,22 +41,24 @@ export function buildPathChunks(stroke, segPerChunk = DEFAULT_SEG_PER_CHUNK){
   // Typed array case
   if (stroke.n != null && stroke.pts && typeof stroke.pts.BYTES_PER_ELEMENT === 'number'){
     const n = stroke.n;
-    const segCount = Math.max(0, Math.floor(n/STRIDE) - 1);
+    const pointCount = Math.max(0, Math.floor(n/STRIDE));
+    const segCount = Math.max(0, pointCount - 1);
     if (segCount < MIN_SEG_FOR_CHUNKING) return [];
     const step = Math.max(1, segPerChunk);
     const chunks = [];
-    let i0 = 0;
-    while (i0 + STRIDE < n){
-      const lastSegEnd = Math.min(n-STRIDE, i0 + step*STRIDE);
+    let p0 = 0; // point index (not float index)
+    while (p0 < pointCount){
+      const p1 = Math.min(pointCount - 1, p0 + step);
       let minx=Infinity, miny=Infinity, maxx=-Infinity, maxy=-Infinity;
-      for (let i=i0; i<=lastSegEnd; i+=STRIDE){
-        const x=stroke.pts[i], y=stroke.pts[i+1];
+      for (let pi=p0; pi<=p1; pi++){
+        const off = pi * STRIDE;
+        const x=stroke.pts[off], y=stroke.pts[off+1];
         if (x<minx) minx=x; if (y<miny) miny=y;
         if (x>maxx) maxx=x; if (y>maxy) maxy=y;
       }
-      chunks.push({ i0, i1: lastSegEnd, bbox:{minx, miny, maxx, maxy} });
-      if (lastSegEnd === n-STRIDE) break;
-      i0 = lastSegEnd;
+      chunks.push({ i0: p0, i1: p1, bbox:{minx, miny, maxx, maxy} });
+      if (p1 === pointCount - 1) break;
+      p0 = p1;
     }
     return chunks;
   }
