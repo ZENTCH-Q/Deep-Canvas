@@ -374,8 +374,13 @@ export class TextTool {
     // typing
     this._onKeyDown = (e) => this._handleKeyDown(e);
     this._onPaste   = (e) => this._handlePaste(e);
+    // Robust clipboard support: handle native copy/cut events too
+    this._onCopy    = (e) => this._handleCopyEvent(e);
+    this._onCut     = (e) => this._handleCutEvent(e);
     window.addEventListener('keydown', this._onKeyDown, { capture: true });
     window.addEventListener('paste',   this._onPaste,   { capture: true });
+    window.addEventListener('copy',    this._onCopy,    { capture: true });
+    window.addEventListener('cut',     this._onCut,     { capture: true });
 
     // track original text for a single coalesced history entry
     this._sessionTextBefore = null;
@@ -413,6 +418,9 @@ export class TextTool {
     document.removeEventListener('pointerdown', this._onDocPointerDown, { capture: true });
     window.removeEventListener('keydown', this._onKeyDown, { capture: true });
     window.removeEventListener('paste',   this._onPaste,   { capture: true });
+    window.removeEventListener('copy',    this._onCopy,    { capture: true });
+    window.removeEventListener('cut',     this._onCut,     { capture: true });
+    try { window.__dcHideTextSizeUI?.(); } catch {}
     try { this.canvas.removeEventListener('dblclick', this._onCanvasDblClick, { capture:false }); } catch {}
     clearInterval(this._blinkTimer);
   }
@@ -442,6 +450,9 @@ export class TextTool {
     }
     s.editing = false;
     s.pipeLines = null;
+    window.__dcHideTextSizeUI?.();
+    markDirty(); 
+    scheduleRender();
     s.selStart = s.selEnd = s.caret ?? 0;
     try { this.state.selection.clear(); } catch {}
     // If content changed, push a single history mutation for the session
@@ -695,6 +706,72 @@ export class TextTool {
     } catch {}
   }
 
+  _activeAndNotInUi(target){
+    if (this.state?.tool !== 'text') return null;
+    if (!this._active) return null;
+    const tgt = target;
+    const ae  = document.activeElement;
+    const inUi =
+      tgt?.closest?.('[data-dc-ui="true"]') ||
+      ae?.closest?.('[data-dc-ui="true"]') ||
+      (tgt && (tgt.tagName === 'INPUT' || tgt.tagName === 'TEXTAREA' || tgt.isContentEditable)) ||
+      (ae  && (ae.tagName  === 'INPUT' || ae.tagName  === 'TEXTAREA' || ae.isContentEditable));
+    if (inUi) return null;
+    return this._active;
+  }
+
+  _selectedText(){
+    const s = this._active; if (!s) return '';
+    let text = String(s.text || '');
+    try {
+      let a = Number.isFinite(s.selStart) ? s.selStart : s.caret||0;
+      let b = Number.isFinite(s.selEnd)   ? s.selEnd   : s.caret||0;
+      if (a !== b) { if (a>b) { const t=a;a=b;b=t; } text = text.slice(a, b); }
+    } catch {}
+    return text;
+  }
+
+  _handleCopyEvent(e){
+    const s = this._activeAndNotInUi(e.target); if (!s) return;
+    try {
+      const text = this._selectedText();
+      if (e && e.clipboardData && typeof e.clipboardData.setData === 'function'){
+        e.clipboardData.setData('text/plain', text);
+        e.preventDefault();
+        return;
+      }
+    } catch {}
+    // Fallback to existing async clipboard path
+    try { this._copyEdit(); } catch {}
+  }
+
+  _handleCutEvent(e){
+    const s = this._activeAndNotInUi(e.target); if (!s) return;
+    try {
+      const text = this._selectedText();
+      if (e && e.clipboardData && typeof e.clipboardData.setData === 'function'){
+        e.clipboardData.setData('text/plain', text);
+        e.preventDefault();
+        // After placing on clipboard, remove selection
+        this._pushEditSnapshot();
+        this._deleteSelectionIfAny() ?? (s.text = '');
+        layoutTextAndGrow(s, this.camera, this._ctx, this._blinkOn);
+        markDirty(); scheduleRender();
+        return;
+      }
+    } catch {}
+    // Fallback when clipboardData isn't available
+    (async () => {
+      try { await this._copyEdit(); } catch {}
+      try {
+        this._pushEditSnapshot();
+        this._deleteSelectionIfAny() ?? (s.text = '');
+        layoutTextAndGrow(s, this.camera, this._ctx, this._blinkOn);
+        markDirty(); scheduleRender();
+      } catch {}
+    })();
+  }
+
   // ---- keyboard ----
   _handleKeyDown(e){
     // Only respond when Text tool is active
@@ -714,6 +791,7 @@ export class TextTool {
         const s = this._active;
         removeStroke(this.state, s);
         this._active = null;
+        try { window.__dcHideTextSizeUI?.(); } catch {}
         markDirty(); scheduleRender();
       }
       return;
@@ -724,8 +802,9 @@ export class TextTool {
     if (e.metaKey || e.ctrlKey){
       const k = e.key.toLowerCase();
       if (k === 'a'){ e.preventDefault(); const s=this._active; const L=(s.text||'').length; s.selStart=0; s.selEnd=L; s.caret=L; layoutTextAndGrow(s,this.camera,this._ctx,this._blinkOn); scheduleRender(); return; }
-      if (k === 'c'){ e.preventDefault(); e.stopPropagation(); this._copyEdit(); return; }
-      if (k === 'x'){ e.preventDefault(); e.stopPropagation(); (async()=>{ await this._copyEdit(); this._pushEditSnapshot(); this._deleteSelectionIfAny() ?? (this._active.text=''); layoutTextAndGrow(this._active,this.camera,this._ctx,this._blinkOn); markDirty(); scheduleRender(); })(); return; }
+      // Let native copy/cut events handle clipboard
+      if (k === 'c'){ return; }
+      if (k === 'x'){ return; }
       if (k === 'z'){ e.preventDefault(); e.stopPropagation(); if (e.shiftKey) this._redoEdit(); else this._undoEdit(); return; }
       if (k === 'y'){ e.preventDefault(); e.stopPropagation(); this._redoEdit(); return; }
       // Let Ctrl/Cmd+V fall through to paste handler
@@ -786,12 +865,28 @@ export class TextTool {
     const ae  = document.activeElement;
     if (tgt?.closest?.('[data-dc-ui="true"]') || ae?.closest?.('[data-dc-ui="true"]')) return;
     try{
-      const raw = (e.clipboardData || window.clipboardData).getData('text');
-      if (raw){
+      let raw = '';
+      try { raw = (e.clipboardData || window.clipboardData)?.getData?.('text') || ''; } catch {}
+      if (raw && typeof raw === 'string'){
         e.preventDefault();
-        const MAX = 10000; // ~10k chars is plenty
+        const MAX = 10000;
         const txt = String(raw).replace(/\r/g,'').slice(0, MAX);
         this._insertAtCaret(txt);
+        return;
+      }
+      // Fallback to async clipboard API if event data not provided
+      if (navigator?.clipboard?.readText) {
+        (async () => {
+          try {
+            const v = await navigator.clipboard.readText();
+            if (v && this._active) {
+              const MAX = 10000;
+              const txt = String(v).replace(/\r/g,'').slice(0, MAX);
+              this._insertAtCaret(txt);
+              scheduleRender();
+            }
+          } catch {}
+        })();
       }
     } catch {}
   }
@@ -1182,6 +1277,7 @@ export class TextTool {
   cancel(){
     if (this._drafting && this._active) removeStroke(this.state, this._active);
     this._drafting = false;
+    try { window.__dcHideTextSizeUI?.(); } catch {}
     this._downWorld = null;
     this._downScreen = null;
     this._mode = null; this._handle = null;

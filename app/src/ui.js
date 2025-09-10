@@ -461,6 +461,19 @@ export function initUI({ state, canvas, camera, setTool }){
     const t=e.target; if (t&&(t.tagName==='INPUT'||t.tagName==='TEXTAREA'||t.isContentEditable)) return;
     const k=(e.key||'').toLowerCase();
 
+    // If a text shape is actively being edited, defer clipboard shortcuts to TextTool
+    try {
+      if (state.tool === 'text'){
+        const list = state.strokes || state.shapes || [];
+        for (let i=list.length-1;i>=0;i--){
+          const s=list[i];
+          if (s && s.shape==='text' && s.editing){
+            if (k==='c' || k==='x' || k==='v' || k==='a') return;
+          }
+        }
+      }
+    } catch {}
+
     if (k==='c'){
       if (state.selection && state.selection.size){
         const clip=[]; for (const s of state.selection){ const d=deepCloneForClipboard(s); if(d) clip.push(d); }

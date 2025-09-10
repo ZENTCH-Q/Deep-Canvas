@@ -289,7 +289,9 @@ function setTool(name){
   for (const b of document.querySelectorAll('[data-tool]')) {
     b.classList.toggle('active', b.dataset.tool === name);
   }
+  // End any in-progress interactions and dispose previous tool (important for TextTool listeners)
   currentTool?.cancel?.();
+  currentTool?.destroy?.();
   currentTool = createTool(name, { canvas, ctx, overlay, camera, state });
   scheduleRender();
 }
@@ -604,7 +606,7 @@ let indexJobGen = 0;
 state._indexBusy = false;
 function ensureIndexWorker(){
   if (indexWorker) return indexWorker;
-  indexWorker = new Worker(new URL('./workers/spatial_index_worker.js', import.meta.url), { type:'module' });
+  indexWorker = new Worker(new URL('./workers/spatial_index_worker.js', import.meta.url) /* no type:'module' */)
   indexWorker.onmessage = (ev) => {
     const msg = ev.data || {};
     if (msg.type !== 'rebuilt') return;

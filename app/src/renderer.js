@@ -138,10 +138,7 @@ function drawTextBoxWorld(ctx, camera, s, dpr = 1) {
   const align = s.align || 'center';
   ctx.textAlign = (align === 'left') ? 'left' : (align === 'right' ? 'right' : 'center');
   ctx.textBaseline = 'top';
-  // if dash/width/glow style layers are active, outline the text so dashes show
-  const wantsStroke = (s?.react2?.style?.layers || []).some(l =>
-    l?.enabled && (l.type === 'dash' || l.type === 'width' || l.type === 'glow')
-  );
+  const wantsStroke = !!s.textOutline;
   if (wantsStroke) {
     const scale = Math.max(1e-8, camera.scale);
     const fs = s.fontSize || (24 / scale);
@@ -526,6 +523,13 @@ function ensureFSWidget(){
   if (__fsw) return __fsw;
 
   const el = document.createElement('div');
+  let currentShape = null;
+  function hide(){ 
+    el.style.display = 'none'; 
+    currentShape = null; 
+  }
+  // expose to tools (used on cancel)
+  try { window.__dcHideTextSizeUI = hide; } catch {}
   // Mark as UI so tools ignore its events
   el.setAttribute('data-dc-ui', 'true');
   el.style.position = 'absolute';
@@ -589,7 +593,6 @@ function ensureFSWidget(){
   const fontSel = el.querySelector('[data-font]');
 
   let bindState = null; // { state, camera }
-  let currentShape = null;
 
   function setPx(px){
     if (!bindState || !currentShape) return;
@@ -652,6 +655,12 @@ function ensureFSWidget(){
     });
   }
 
+  document.addEventListener('pointerdown', (ev) => {
+    const host = el.parentElement;
+    if (bindState?.state?.tool !== 'text') { hide(); return; }
+    if (host && !host.contains(ev.target)) hide();
+  }, true);
+
   function bind(state, camera){ bindState = { state, camera }; }
   function update(targetShape, camera, canvasLike){
     // keep the widget inside the canvas container so it stacks like other pills
@@ -659,12 +668,11 @@ function ensureFSWidget(){
     if (el.parentNode !== host) host.appendChild(el);
 
     // Hide if text tool isn't active or canvas/host is hidden
-    if (!bindState?.state || bindState.state.tool !== 'text' || !host || (host instanceof HTMLElement && host.offsetParent === null)){
-      el.style.display = 'none'; currentShape = null; return;
-    }
-
-    if (!targetShape || targetShape.shape !== 'text'){ // hide if no active text
-      el.style.display = 'none'; currentShape = null; return;
+    if (!bindState?.state || bindState.state.tool !== 'text' || 
+        !host || (host instanceof HTMLElement && host.offsetParent === null) ||
+        !targetShape || targetShape.shape !== 'text' || !targetShape.editing){
+      hide();
+      return;
     }
     // Hide if text bbox is offscreen (not visible in current view)
     try {
@@ -1324,7 +1332,12 @@ export function render(state, camera, ctx, canvasLike, opts = {}) {
       if (axf.tx || axf.ty) ctx.translate(axf.tx, axf.ty);
       animApplied = true;
     }
-    applyStyleLayers(ctx, camera, s, state, tNow, baseW, dpr);
+    if (s.shape !== 'text') {
+      applyStyleLayers(ctx, camera, s, state, tNow, baseW, dpr);
+    } else {
+      // ensure no leftover layer state leaks into text render
+      try { ctx.setLineDash([]); ctx.lineDashOffset = 0; ctx.shadowBlur = 0; ctx.filter = 'none'; } catch {}
+    }
     if (s.kind === 'path') {
       if (s.pts && s.n != null) {
         const live = state._drawingActive || state._erasingActive || state._transformActive;
