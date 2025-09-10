@@ -41,6 +41,8 @@ const dockEl       = document.getElementById('dock');
 const toolPropsEl  = document.getElementById('toolProps');
 const poseHudEl    = document.getElementById('poseHud');
 const backBtn      = document.getElementById('backToGallery');
+const saveIndicator = document.getElementById('saveIndicator');
+const zoomBadge     = document.getElementById('zoomBadge');
 
 let currentDocId   = null;
 let currentDocName = 'Untitled';
@@ -68,6 +70,13 @@ function initGalleryFromDocs() {
     },
     onDelete(id) {
       deleteDoc(id);
+    },
+    onDuplicate(id) {
+      try {
+        const created = createDoc({ duplicateOf: id });
+        const doc = (typeof created === 'string') ? getDoc(created) : created;
+        if (doc) { galleryCtl?.add(docToItem(doc)); openDoc(doc); }
+      } catch {}
     },
     onCreateNew(detail) {
       const bgHex = (typeof detail?.bg === 'string') ? detail.bg : null;
@@ -510,6 +519,7 @@ function applyWheelZoom(){
   camera.zoomAround(p, zoomFactor, minScale, maxScale);
 
   scheduleRender();
+  try { showZoomBadge(); } catch {}
 
   clearTimeout(wheelIdleTimer);
   wheelIdleTimer = setTimeout(() => {
@@ -573,10 +583,107 @@ window.addEventListener('keydown', (e) => {
 });
 window.addEventListener('keyup', (e) => { if (e.key===' ') canvas.classList.remove('panning'); });
 
+// --- Zoom helpers & badges --------------------------------------------------
+let _zoomTimer = 0;
+function showZoomBadge(){
+  if (!zoomBadge) return;
+  try {
+    const pct = Math.round((camera.scale || 1) * 100);
+    zoomBadge.textContent = `${pct}%`;
+    const r = (document.getElementById('dock') || canvas).getBoundingClientRect();
+    zoomBadge.style.left = ((r.left + r.right)/2) + 'px';
+    zoomBadge.style.top  = (r.top - 12) + 'px';
+    zoomBadge.style.display = 'block';
+    clearTimeout(_zoomTimer);
+    _zoomTimer = setTimeout(()=>{ if (zoomBadge) zoomBadge.style.display = 'none'; }, 1000);
+  } catch {}
+}
+
+function contentBounds(){
+  let minx=Infinity,miny=Infinity,maxx=-Infinity,maxy=-Infinity;
+  for (const s of state.strokes){ const b=s?.bbox; if(!b) continue; if(b.minx<minx)minx=b.minx; if(b.miny<miny)miny=b.miny; if(b.maxx>maxx)maxx=b.maxx; if(b.maxy>maxy)maxy=b.maxy; }
+  if (!Number.isFinite(minx)){
+    const sz = state._docSize || { w:1600, h:1000 };
+    return { minx:0, miny:0, maxx:sz.w, maxy:sz.h };
+  }
+  return { minx, miny, maxx, maxy };
+}
+function fitToBounds(b){
+  if (!b) return;
+  const cw = Math.max(1, canvas.clientWidth|0);
+  const ch = Math.max(1, canvas.clientHeight|0);
+  const w = Math.max(1, b.maxx - b.minx);
+  const h = Math.max(1, b.maxy - b.miny);
+  const pad = 0.90;
+  const scale = pad * Math.min(cw / w, ch / h);
+  const cx = (b.minx + b.maxx) * 0.5;
+  const cy = (b.miny + b.maxy) * 0.5;
+  camera.scale = Math.max(1e-6, scale);
+  camera.tx = (cw * 0.5) - camera.scale * cx;
+  camera.ty = (ch * 0.5) - camera.scale * cy;
+  camera.setHome(camera.scale, camera.tx, camera.ty);
+  scheduleRender();
+  showZoomBadge();
+}
+function fitToContent(){ fitToBounds(contentBounds()); }
+
 function getParams(){
   const hp = new URLSearchParams(location.hash.startsWith('#') ? location.hash.slice(1) : location.hash);
   const qp = new URLSearchParams(location.search);
   return (key) => hp.get(key) ?? qp.get(key);
+}
+
+// Global hotkeys for fit/zoom/help
+function onGlobalHotkeys(e){
+  const tag = (e.target && e.target.tagName) ? e.target.tagName.toLowerCase() : '';
+  const isTyping = tag === 'input' || tag === 'textarea' || (e.target && e.target.isContentEditable);
+  if (isTyping) return;
+
+  const k = e.key;
+  if (k && typeof k === 'string'){
+    const lower = k.toLowerCase();
+    if (lower === 'f'){ e.preventDefault(); fitToContent(); return; }
+    if (k === '1' || k === '2' || k === '3'){
+      e.preventDefault();
+      const target = (k === '1') ? 1 : (k === '2') ? 2 : 3;
+      const center = { x: canvas.clientWidth/2, y: canvas.clientHeight/2 };
+      const factor = Math.max(1e-6, target / Math.max(1e-6, camera.scale));
+      camera.zoomAround(center, factor);
+      scheduleRender(); showZoomBadge();
+      return;
+    }
+    if (k === '?' || (e.shiftKey && k === '/')){ e.preventDefault(); toggleHelpOverlay(); return; }
+  }
+}
+window.addEventListener('keydown', onGlobalHotkeys);
+
+// Saving indicator + toasts
+let _savedTimer = 0;
+function setSaveIndicator(text, cls){
+  if (!saveIndicator) return;
+  saveIndicator.textContent = text || '';
+  saveIndicator.style.display = text ? 'inline-flex' : 'none';
+  if (cls) saveIndicator.setAttribute('data-state', cls); else saveIndicator.removeAttribute('data-state');
+}
+function showToast(msg){
+  const host = document.getElementById('toastHost'); if (!host) return;
+  const n = document.createElement('div'); n.className = 'toast'; n.textContent = String(msg||'');
+  host.appendChild(n);
+  requestAnimationFrame(()=>{ n.classList.add('show'); });
+  setTimeout(()=>{ n.classList.remove('show'); setTimeout(()=>{ if(n.parentNode) host.removeChild(n); }, 200); }, 2200);
+}
+document.addEventListener('docs:save:begin', ()=>{ clearTimeout(_savedTimer); setSaveIndicator('Saving…', 'saving'); });
+document.addEventListener('docs:save:end', ()=>{
+  setSaveIndicator('Saved', 'ok');
+  clearTimeout(_savedTimer);
+  _savedTimer = setTimeout(()=> setSaveIndicator('', ''), 1200);
+});
+document.addEventListener('docs:save:error', ()=>{ setSaveIndicator('Save failed', 'err'); showToast('Storage full or unavailable. Thumbnail was dropped to save space.'); });
+
+function toggleHelpOverlay(force){
+  const pane = document.getElementById('helpOverlay'); if (!pane) return;
+  const next = (typeof force === 'boolean') ? force : (pane.style.display !== 'block');
+  pane.style.display = next ? 'block' : 'none';
 }
 function applyCameraFromURL(){
   const get = getParams();
@@ -1169,6 +1276,12 @@ export function openDoc(docOrId) {
     if (s) fixed.push(s);
   }
   state.strokes.splice(0, state.strokes.length, ...fixed);
+  // Remember doc size for fit/zoom helpers
+  try {
+    const sz = doc.data?.size; if (sz && Number.isFinite(+sz.w) && Number.isFinite(+sz.h)) {
+      state._docSize = { w: Math.max(1, +sz.w), h: Math.max(1, +sz.h) };
+    } else { state._docSize = null; }
+  } catch { state._docSize = null; }
 
   if (payload.background && typeof payload.background.color === 'string') {
     const a = Number(payload.background.alpha);

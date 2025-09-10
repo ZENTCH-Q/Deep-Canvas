@@ -344,7 +344,8 @@ function mountGalleryPlusCard(state) {
   const leftSw = mkSw('#ffffff','white');
   const rightSw = mkSw('#0f1115','black');
   function placeSw(){ const r=btn.getBoundingClientRect(); const cx=r.left+r.width/2; const cy=r.top+r.height/2; const y=Math.round(cy-swH/2);
-    leftSw.style.top=y+'px'; rightSw.style.top=y+'px'; leftSw.style.left=Math.round(cx-offset-swW/2)+'px'; rightSw.style.left=Math.round(cx+offset-swW/2)+'px'; }
+    leftSw.style.top=y+'px'; rightSw.style.top=y+'px';
+    leftSw.style.left=Math.round(cx-offset-swW/2)+'px'; rightSw.style.left=Math.round(cx+offset-swW/2)+'px'; }
   function showSwatches(){ placeSw(); leftSw.style.opacity='0'; rightSw.style.opacity='0'; leftSw.style.display='grid'; rightSw.style.display='grid'; requestAnimationFrame(()=>{ leftSw.style.opacity='1'; rightSw.style.opacity='1'; });
     setTimeout(()=>{ document.addEventListener('pointerdown', onDocDown, { capture:true }); document.addEventListener('keydown', onKey, { capture:true }); },0); }
   function hideSwatches(){ leftSw.style.display='none'; rightSw.style.display='none'; document.removeEventListener('pointerdown', onDocDown, { capture:true }); document.removeEventListener('keydown', onKey, { capture:true }); }

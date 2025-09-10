@@ -79,6 +79,7 @@ export function initGalleryView(options = {}) {
     onOpen: (/* id */) => {},
     onRename: (/* id, name */) => {},
     onDelete: (/* id */) => {},
+    onDuplicate: (/* id */) => {},
     onCreateNew: () => {},
     afterReorder: (/* items */) => {},
     ...options
@@ -125,6 +126,18 @@ export function initGalleryView(options = {}) {
       inlineRename(nameEl, it, (nv) => { opts.onRename?.(it.id, nv); it.name = nv; });
     });
 
+    const dupBtn = el('button', 'g-act g-dup');
+    dupBtn.title = 'Duplicate';
+    dupBtn.innerHTML = `
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
+        <rect x="3" y="7" width="12" height="12" rx="2"/>
+        <rect x="9" y="3" width="12" height="12" rx="2"/>
+      </svg>`;
+    dupBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      try { opts.onDuplicate?.(it.id); } catch {}
+    });
+
     const delBtn = el('button', 'g-act g-del');
     delBtn.title = 'Delete';
     delBtn.setAttribute('aria-label', `Delete ${it.name || 'Untitled'}`);
@@ -142,6 +155,7 @@ export function initGalleryView(options = {}) {
     });
 
     actions.appendChild(renameBtn);
+    actions.appendChild(dupBtn);
     actions.appendChild(delBtn);
     thumb.appendChild(actions);
 
