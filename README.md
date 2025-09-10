@@ -43,6 +43,7 @@ If SmartScreen warns, click More info → Run anyway (unsigned builds).
 
 ## Quick start & hotkeys
 
+<<<<<<< HEAD
 - Tools: Draw, Paint (bucket), Erase, Delete, Pan, Line/Rect/Ellipse, Select
 - Pan: hold Space, drag
 - Zoom: mouse wheel / trackpad (zooms around cursor)
@@ -53,6 +54,20 @@ If SmartScreen warns, click More info → Run anyway (unsigned builds).
   - Double‑click card image to open canvas
   - Double‑click title to rename
   - … menu → Delete
+=======
+- **Tools:** Draw, Paint (bucket), Erase, Delete, Pan, Line/Rect/Ellipse, Select
+- **Pan:** hold **Space**, drag
+- **Zoom:** mouse wheel / trackpad (zooms around cursor)
+- **Undo / Redo:** `Ctrl/win + Z`, `Ctrl+Y` or `Shift+win + Z`
+- **Right-click** on canvas: context menu (Reset View, Save PNG, Delete Selected)
+- **Space-Bar** to stop any animation that was playing
+- **Gallery:**
+  - Click **+** to create
+  - **Double-click** card image to open canvas
+  - **Double-click** title to rename
+  - **⋯** menu → **Delete**
+  - Thumbnails show the **last camera view** you left the canvas in
+>>>>>>> 7990ecad088e9b5a861d201bf62c5d18287650e1
 
 ---
 
@@ -69,3 +84,8 @@ cd Deep-Canvas
 npm install
 npm run dev
 ```
+<<<<<<< HEAD
+=======
+---
+I accept any new ideas That can make Deep Canvas Better and Will Try my best to Fulfill any idea that you given :)
+>>>>>>> 7990ecad088e9b5a861d201bf62c5d18287650e1
