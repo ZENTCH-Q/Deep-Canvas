@@ -233,7 +233,7 @@ export function initGalleryView(options = {}) {
   try { items = (opts.getItems?.() || []).slice(); } catch { items = []; }
   render();
 
-  const onNew = () => opts.onCreateNew?.();
+  const onNew = (ev) => opts.onCreateNew?.(ev?.detail || null);
   document.addEventListener('gallery:new-canvas', onNew);
 
   return {

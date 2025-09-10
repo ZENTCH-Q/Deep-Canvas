@@ -1,5 +1,6 @@
 // src/ui.js
 import { scheduleRender, markDirty, subscribe } from './state.js';
+import { safeGetItem, queueSetItem, safeRemoveItem } from './utils/storage.js';
 import { clearAll } from './strokes.js';
 import { insert, grid } from './spatial_index.js';
 import { transformStrokeGeom } from './strokes.js';
@@ -36,14 +37,14 @@ function toHex6(v) {
 function dedupeKeepOrder(arr){ const s=new Set(); const out=[]; for (const h of arr){ if (!h||s.has(h)) continue; s.add(h); out.push(h);} return out; }
 function loadRecent(){
   try{
-    const raw = localStorage.getItem(LS_RECENT_KEY);
+    const raw = safeGetItem(LS_RECENT_KEY);
     const arr = Array.isArray(JSON.parse(raw)) ? JSON.parse(raw) : [];
     const norm = arr.map(toHex6).filter(Boolean);
     if (norm.length) return norm.slice(0, MAX_RECENT);
   }catch{}
   for (const k of LEGACY_KEYS){
     try{
-      const raw = localStorage.getItem(k);
+      const raw = safeGetItem(k);
       const arr = Array.isArray(JSON.parse(raw)) ? JSON.parse(raw) : [];
       const norm = dedupeKeepOrder(arr.map(toHex6).filter(Boolean));
       if (norm.length){ saveRecent(norm); return norm.slice(0, MAX_RECENT); }
@@ -51,7 +52,7 @@ function loadRecent(){
   }
   return [];
 }
-function saveRecent(arr){ try{ localStorage.setItem(LS_RECENT_KEY, JSON.stringify(arr.slice(0, MAX_RECENT))); }catch{} }
+function saveRecent(arr){ try{ queueSetItem(LS_RECENT_KEY, JSON.stringify(arr.slice(0, MAX_RECENT))); }catch{} }
 function pushRecent(hex){
   const h = toHex6(hex); if (!h) return;
   const arr = loadRecent(); const i = arr.indexOf(h);
@@ -321,14 +322,114 @@ function materializeFromClipboard(data, state){
 }
 
 function mountGalleryPlusCard(state) {
-  const btn = document.getElementById('newCanvasFAB');
+  // Prefer the last FAB in DOM order in case of duplicate IDs in markup
+  const all = Array.from(document.querySelectorAll('#newCanvasFAB'));
+  const btn = all.length ? all[all.length - 1] : null;
   if (!btn || btn._wired) return;
   btn._wired = true;
-  const fire = () => document.dispatchEvent(new CustomEvent('gallery:new-canvas'));
-  btn.addEventListener('click', fire);
-  btn.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fire(); }
+
+  // Side swatches that pop out from the + button (hidden by default)
+  const swW = 48, swH = 48, offset = 64;
+  function mkSw(bg, label){
+    const b=document.createElement('button'); b.type='button'; b.setAttribute('data-bg', bg); b.title=`New ${label} canvas`;
+    b.style.cssText=`position:fixed;display:none;z-index:10001;width:${swW}px;height:${swH}px;border-radius:14px;`+
+      `border:1px solid var(--border,#2a313c);background:linear-gradient(180deg,rgba(21,26,33,.96),rgba(21,26,33,1));`+
+      `box-shadow:0 12px 28px rgba(0,0,0,.35);place-items:center;cursor:pointer;transition:opacity .12s ease;`;
+    const dot=document.createElement('span'); dot.style.cssText=`display:block;width:22px;height:22px;border-radius:6px;`+
+      `border:1px solid ${bg==='#ffffff'?'#cfd7e3':'#2a313c'};background:${bg}`;
+    b.appendChild(dot);
+    b.addEventListener('click', ()=>{ document.dispatchEvent(new CustomEvent('gallery:new-canvas',{ detail:{ bg } })); hideSwatches(); });
+    document.body.appendChild(b); return b;
+  }
+  const leftSw = mkSw('#ffffff','white');
+  const rightSw = mkSw('#0f1115','black');
+  function placeSw(){ const r=btn.getBoundingClientRect(); const cx=r.left+r.width/2; const cy=r.top+r.height/2; const y=Math.round(cy-swH/2);
+    leftSw.style.top=y+'px'; rightSw.style.top=y+'px'; leftSw.style.left=Math.round(cx-offset-swW/2)+'px'; rightSw.style.left=Math.round(cx+offset-swW/2)+'px'; }
+  function showSwatches(){ placeSw(); leftSw.style.opacity='0'; rightSw.style.opacity='0'; leftSw.style.display='grid'; rightSw.style.display='grid'; requestAnimationFrame(()=>{ leftSw.style.opacity='1'; rightSw.style.opacity='1'; });
+    setTimeout(()=>{ document.addEventListener('pointerdown', onDocDown, { capture:true }); document.addEventListener('keydown', onKey, { capture:true }); },0); }
+  function hideSwatches(){ leftSw.style.display='none'; rightSw.style.display='none'; document.removeEventListener('pointerdown', onDocDown, { capture:true }); document.removeEventListener('keydown', onKey, { capture:true }); }
+  function onDocDown(e){ if (!leftSw.contains(e.target) && !rightSw.contains(e.target) && e.target!==btn) hideSwatches(); }
+  function onKey(e){ if (e.key==='Escape'){ e.preventDefault(); hideSwatches(); } }
+  const toggleSwatches=(e)=>{ e?.preventDefault?.(); (leftSw.style.display==='grid')?hideSwatches():showSwatches(); };
+  btn.addEventListener('click', toggleSwatches);
+  btn.addEventListener('keydown', (e)=>{ if(e.key==='Enter'||e.key===' '){ toggleSwatches(e); } });
+  window.addEventListener('resize', ()=>{ if(leftSw.style.display==='grid') placeSw(); });
+
+  // Modal dialog for new canvas (kept for future, not opened by default)
+  const overlay = document.createElement('div');
+  overlay.id = 'newCanvasModal';
+  overlay.style.cssText = 'position:fixed;inset:0;display:none;z-index:10001;background:rgba(0,0,0,.35)';
+  const pane = document.createElement('div');
+  pane.style.cssText = 'position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);min-width:320px;max-width:92vw;padding:14px 16px;border-radius:12px;background:var(--glass,#151a21cc);border:1px solid var(--border,#2a313c);box-shadow:0 18px 44px rgba(0,0,0,.35);color:var(--text,#e7ebf3)';
+  pane.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px">
+      <strong>New Canvas</strong>
+      <button id="ncClose" class="btn" style="padding:4px 10px">Cancel</button>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:12px">
+      <label style="display:flex;gap:8px;align-items:center;justify-content:space-between">
+        <span>Name</span>
+        <input id="ncName" type="text" placeholder="Untitled" style="min-width:180px" />
+      </label>
+      <div>
+        <div style="font:600 12px system-ui;opacity:.8;margin-bottom:6px">Background</div>
+        <div style="display:flex;gap:10px;align-items:center">
+          <button type="button" data-bg="#ffffff" class="nc-swatch" style="display:grid;gap:6px;place-items:center;padding:8px 10px;border-radius:10px;border:1px solid var(--border,#2a313c);background:var(--panel-2,#1b2028);color:var(--text,#e7ebf3)">
+            <span style="width:28px;height:28px;border-radius:6px;background:#ffffff;border:1px solid #cfd7e3"></span>
+            <span>White</span>
+          </button>
+          <button type="button" data-bg="#0f1115" class="nc-swatch" style="display:grid;gap:6px;place-items:center;padding:8px 10px;border-radius:10px;border:1px solid var(--border,#2a313c);background:var(--panel-2,#1b2028);color:var(--text,#e7ebf3)">
+            <span style="width:28px;height:28px;border-radius:6px;background:#0f1115;border:1px solid #2a313c"></span>
+            <span>Black</span>
+          </button>
+        </div>
+      </div>
+      <div>
+        <div style="font:600 12px system-ui;opacity:.8;margin-bottom:6px">Size</div>
+        <div style="display:flex;gap:8px;align-items:center;justify-content:space-between">
+          <select id="ncSize" style="min-width:180px">
+            <option value="default">Default (1600×1000)</option>
+            <option value="hd">HD (1920×1080)</option>
+            <option value="square">Square (2048×2048)</option>
+            <option value="custom">Custom…</option>
+          </select>
+          <span id="ncDims" style="display:none;gap:6px;align-items:center">
+            <input id="ncW" type="number" min="256" step="1" value="1600" style="width:92px" /> ×
+            <input id="ncH" type="number" min="256" step="1" value="1000" style="width:92px" />
+          </span>
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;justify-content:flex-end">
+        <button id="ncCreate" class="btn" style="padding:6px 12px">Create</button>
+      </div>
+    </div>
+  `;
+  overlay.appendChild(pane); document.body.appendChild(overlay);
+
+  let chosenBg = '#0f1115';
+  pane.querySelectorAll('.nc-swatch').forEach(b=>{
+    b.addEventListener('click', ()=>{ chosenBg = b.getAttribute('data-bg') || '#0f1115'; pane.querySelectorAll('.nc-swatch').forEach(x=>x.style.outline=''); b.style.outline='2px solid var(--accent)'; b.style.outlineOffset='2px'; });
   });
+  const sizeSel = pane.querySelector('#ncSize'); const dimsWrap = pane.querySelector('#ncDims'); const wEl = pane.querySelector('#ncW'); const hEl = pane.querySelector('#ncH');
+  sizeSel.addEventListener('change', ()=>{
+    const v = sizeSel.value;
+    if (v==='custom') { dimsWrap.style.display='inline-flex'; }
+    else { dimsWrap.style.display='none'; if (v==='default'){ wEl.value=1600; hEl.value=1000;} if(v==='hd'){wEl.value=1920; hEl.value=1080;} if(v==='square'){wEl.value=2048; hEl.value=2048;} }
+  });
+  function openModal(){ overlay.style.display='block'; try { pane.querySelector('#ncName')?.focus(); }catch{} }
+  function closeModal(){ overlay.style.display='none'; }
+  pane.querySelector('#ncClose')?.addEventListener('click', closeModal);
+  overlay.addEventListener('click', (e)=>{ if (e.target===overlay) closeModal(); });
+  function submit(){
+    const name = (pane.querySelector('#ncName')?.value || 'Untitled').trim() || 'Untitled';
+    let w, h; const mode = sizeSel.value; if (mode==='default'){ w=1600; h=1000; } else if(mode==='hd'){ w=1920; h=1080; } else if(mode==='square'){ w=2048; h=2048; } else { w = Math.max(256, (+wEl.value||1600)|0); h = Math.max(256, (+hEl.value||1000)|0); }
+    document.dispatchEvent(new CustomEvent('gallery:new-canvas', { detail:{ name, w, h, bg: chosenBg } }));
+    closeModal();
+  }
+  pane.querySelector('#ncCreate')?.addEventListener('click', submit);
+  pane.addEventListener('keydown', (e)=>{ if (e.key==='Enter') { e.preventDefault(); submit(); } if (e.key==='Escape'){ e.preventDefault(); closeModal(); } });
+
+  // If you want the full modal instead, swap the click handler to openModal()
 }
 
 export function initUI({ state, canvas, camera, setTool }){
@@ -672,5 +773,5 @@ export function setRecentColors(arr){
   } catch {}
 }
 export function clearRecentColors(){
-  try { localStorage.removeItem(LS_RECENT_KEY); } catch {}
+  try { safeRemoveItem(LS_RECENT_KEY); } catch {}
 }

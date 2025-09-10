@@ -4,11 +4,22 @@ export function makeCamera(scale = 1, tx = 0, ty = 0){
     scale, tx, ty,
     // --- home/original view -----------------------------
     _home: { s: scale, tx, ty },
+    // immutable doc home (updated only by openDoc and renormalize)
+    _docHome: { s: scale, tx, ty },
     setHome(s = this.scale, tx = this.tx, ty = this.ty) {
       this._home = { s, tx, ty };
     },
+    setDocHome(s = this.scale, tx = this.tx, ty = this.ty) {
+      this._docHome = { s, tx, ty };
+    },
     resetToHome() {
       const h = this._home || { s: 1, tx: 0, ty: 0 };
+      this.scale = Number.isFinite(h.s)  ? h.s  : 1;
+      this.tx    = Number.isFinite(h.tx) ? h.tx : 0;
+      this.ty    = Number.isFinite(h.ty) ? h.ty : 0;
+    },
+    resetToDocHome() {
+      const h = this._docHome || this._home || { s: 1, tx: 0, ty: 0 };
       this.scale = Number.isFinite(h.s)  ? h.s  : 1;
       this.tx    = Number.isFinite(h.tx) ? h.tx : 0;
       this.ty    = Number.isFinite(h.ty) ? h.ty : 0;
@@ -105,6 +116,16 @@ export function renormalizeIfNeeded(camera, strokes, opts={}, state){
     const txPrime = htx - tx * (hs / sf);
     const tyPrime = hty - ty * (hs / sf);
     camera._home = { s: sPrime, tx: txPrime, ty: tyPrime };
+  }
+  if (camera._docHome) {
+    const hs  = Number.isFinite(camera._docHome.s)  ? camera._docHome.s  : 1;
+    const htx = Number.isFinite(camera._docHome.tx) ? camera._docHome.tx : 0;
+    const hty = Number.isFinite(camera._docHome.ty) ? camera._docHome.ty : 0;
+    const sf  = Math.max(1e-20, s);
+    const sPrime  = hs / sf;
+    const txPrime = htx - tx * (hs / sf);
+    const tyPrime = hty - ty * (hs / sf);
+    camera._docHome = { s: sPrime, tx: txPrime, ty: tyPrime };
   }
 
   camera.scale = 1; camera.tx = 0; camera.ty = 0;

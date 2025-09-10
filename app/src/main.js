@@ -5,7 +5,7 @@ import { render } from './renderer.js';
 import { createTool } from './tools/index.js';
 import { initUI, getRecentColors, setRecentColors, clearRecentColors } from './ui.js';
 import { grid, applyWorkerIndex, rebuildIndex, clearIndex } from './spatial_index.js';
-import { saveViewportPNG } from './export.js';
+import { saveViewportPNG, saveViewportThumb } from './export.js';
 import { removeStroke } from './strokes.js';
 import { PanTool } from './tools/pan.js';
 import { attachHistory } from './history.js';
@@ -16,6 +16,7 @@ import {
   listDocs, getDoc, createDoc,
   saveDocFull, renameDoc, deleteDoc
 } from './docs.js';
+import { telemetry } from './utils/telemetry.js';
 
 const DPR_CAP = 2.5;
 
@@ -48,6 +49,7 @@ let _pendingSave   = null;
 let galleryCtl = null;
 
 function docToItem(d) {
+  // Use document size for consistent card sizes; thumbnail stays centered visually
   const w = (d.data?.size?.w) || d.data?.width  || 1600;
   const h = (d.data?.size?.h) || d.data?.height || 1000;
   return { id: d.id, name: d.name || 'Untitled', width: w, height: h, thumb: d.thumb };
@@ -67,23 +69,23 @@ function initGalleryFromDocs() {
     onDelete(id) {
       deleteDoc(id);
     },
-    onCreateNew() {
-      const created = createDoc('Untitled');
-      const d = (typeof created === 'string') ? getDoc(created) : created;
+    onCreateNew(detail) {
+      const bgHex = (typeof detail?.bg === 'string') ? detail.bg : null;
+      const name = (typeof detail?.name === 'string') ? detail.name.trim() : 'Untitled';
+      const width = Number.isFinite(detail?.w) ? Math.floor(detail.w) : undefined;
+      const height = Number.isFinite(detail?.h) ? Math.floor(detail.h) : undefined;
+      const created = createDoc({ name, width, height, background: bgHex || '#0f1115' });
       try {
-        const doc = d || created;
+        const doc = (typeof created === 'string') ? getDoc(created) : created;
         if (doc) {
           doc.data = doc.data || {};
           doc.data.ui = { ...DEFAULT_UI };
-          // also ensure a predictable fresh background for new docs
-          doc.data.background = { color: '#0f1115', alpha: 1 };
           saveDocFull(doc);
+          // Clear recent colors for a fresh list
+          clearRecentColors(); setRecentColors(DEFAULT_UI.palette);
+          openDoc(doc);
         }
-      } catch {}
-      // Clear “Recent colors” in local storage so UI shows a fresh list
-      clearRecentColors();
-      setRecentColors(DEFAULT_UI.palette);
-      openDoc(d || created);
+      } catch { openDoc(created); }
     },
     afterReorder(items) {
 
@@ -107,6 +109,39 @@ function showGalleryView() {
   toolPropsEl?.style && (toolPropsEl.style.display = 'none');
   poseHudEl?.style && (poseHudEl.style.display = 'none');
 }
+
+// --- Debug pane (Ctrl+Alt+D) ---
+function renderDebugPane() {
+  const host = document.getElementById('debugPane');
+  const pre  = document.getElementById('debugText');
+  if (!host || !pre) return;
+  const snap = telemetry?.snapshot?.() || {};
+  const info = {
+    time: new Date().toISOString(),
+    state: { dirty: !!state.dirty, strokes: state.strokes.length },
+    autosaveKeys: {
+      has_next: !!localStorage.getItem('endless_autosave_next'),
+      has_cur:  !!localStorage.getItem('endless_autosave'),
+      has_prev: !!localStorage.getItem('endless_autosave_prev')
+    },
+    counters: snap.counters || {},
+    last: snap.last || {},
+    recent: (snap.recent || []).slice(-10)
+  };
+  pre.textContent = JSON.stringify(info, null, 2);
+}
+function toggleDebugPane(force) {
+  const host = document.getElementById('debugPane'); if (!host) return;
+  const next = (typeof force === 'boolean') ? force : (host.style.display === 'none');
+  host.style.display = next ? 'block' : 'none';
+  if (next) renderDebugPane();
+}
+document.getElementById('dbgClose')?.addEventListener('click', () => toggleDebugPane(false));
+window.addEventListener('keydown', (e) => {
+  if (e.ctrlKey && e.altKey && (e.key === 'd' || e.key === 'D')) {
+    e.preventDefault(); toggleDebugPane();
+  }
+});
 
 function blobToDataURL(blob) {
   return new Promise(res => {
@@ -196,14 +231,15 @@ async function saveCurrentDoc({ captureThumb = true } = {}) {
 
   if (captureThumb) {
     try {
-      const blob = await saveViewportPNG(canvas, ctx, camera, state, 0.65, 1);
-      const dataURL = await blobToDataURL(blob);
-      doc.thumb = dataURL;
-      galleryCtl?.update({ id: currentDocId, thumb: dataURL });
+      const dataURL = await saveViewportThumb(canvas, ctx, camera, state, { maxDim: 640, quality: 0.7, baseDpr: 1 });
+      if (dataURL) {
+        doc.thumb = dataURL;
+        galleryCtl?.update({ id: currentDocId, thumb: dataURL });
+      }
     } catch {}
   }
 
-  saveDocFull(doc);
+  await saveDocFull(doc);
 }
 
 let _saveTick = 0;
@@ -229,7 +265,7 @@ async function backToGallery() {
  if (d) {
    const exists = galleryCtl?.list().some(it => it.id === d.id);
    if (!exists) galleryCtl?.add(docToItem(d));
-   else galleryCtl?.update({ id: d.id, thumb: d.thumb, name: d.name, width: d.data?.size?.w, height: d.data?.size?.h });
+ else galleryCtl?.update({ id: d.id, thumb: d.thumb, name: d.name, width: d.data?.size?.w, height: d.data?.size?.h });
  }
 
   currentDocId = null;
@@ -255,6 +291,9 @@ function setTool(name){
   scheduleRender();
 }
 
+// Expose tool switcher so tools (e.g., shapes) can switch to Select
+try { state.setTool = setTool; } catch {}
+
 let dpr = 1;
 function computeDPR(){ dpr = Math.min(DPR_CAP, Math.max(1, window.devicePixelRatio || 1)); }
 function resize(){
@@ -271,6 +310,20 @@ function resize(){
   fitDockToCanvas();
   setTimeout(fitDockToCanvas, 0);
   document.fonts?.ready?.then?.(fitDockToCanvas);
+
+  // Auto-calibrate when DPR or canvas size changes significantly vs last calibration
+  try {
+    const p = state._perf || null;
+    if (p) {
+      const dprDelta = Math.abs((p.dpr || 1) - dpr);
+      const areaPrev = Math.max(1, (p.w || 1) * (p.h || 1));
+      const areaNow = Math.max(1, canvas.width * canvas.height);
+      const areaRatio = areaNow / areaPrev;
+      if (dprDelta > 0.25 || areaRatio > 1.5 || areaRatio < (1/1.5)) {
+        scheduleAutoCalibration('resize/dpr_change');
+      }
+    }
+  } catch {}
 }
 new ResizeObserver(resize).observe(canvas);
 new ResizeObserver(() => fitDockToCanvas()).observe(document.getElementById('canvasContainer') || document.body);
@@ -296,12 +349,20 @@ function shouldSendToPanOverride(e) {
   return e.pointerType === 'mouse';              // keep mouse middle-drag etc
 }
 
+let _exactTimer = 0;
+function kickExactIdle(){
+  state._renderExact = false;
+  if (_exactTimer) { clearTimeout(_exactTimer); _exactTimer = 0; }
+  _exactTimer = setTimeout(() => { state._renderExact = true; scheduleRender(); }, 180);
+}
+
 canvas.addEventListener('pointerdown',  e => {
   normalizePointerEvent(e);
   if (e.pointerType !== 'mouse') e.preventDefault(); // block browser touch behavior just in case
   try { canvas.setPointerCapture(e.pointerId); } catch {}
   if (shouldSendToPanOverride(e)) panOverrideTool.onPointerDown?.(e);
   currentTool.onPointerDown?.(e);
+  kickExactIdle();
 });
 
 canvas.addEventListener('pointermove',  e => {
@@ -309,6 +370,7 @@ canvas.addEventListener('pointermove',  e => {
   if (e.pointerType !== 'mouse') e.preventDefault();
   if (shouldSendToPanOverride(e)) panOverrideTool.onPointerMove?.(e);
   currentTool.onPointerMove?.(e);
+  kickExactIdle();
 });
 
 canvas.addEventListener('pointerup',    e => {
@@ -317,6 +379,7 @@ canvas.addEventListener('pointerup',    e => {
   if (shouldSendToPanOverride(e)) panOverrideTool.onPointerUp?.(e);
   currentTool.onPointerUp?.(e);
   try { canvas.releasePointerCapture(e.pointerId); } catch {}
+  kickExactIdle();
 });
 
 canvas.addEventListener('pointercancel', e => {
@@ -324,6 +387,7 @@ canvas.addEventListener('pointercancel', e => {
   if (shouldSendToPanOverride(e)) panOverrideTool.cancel?.(e);
   currentTool.cancel?.(e);
   try { canvas.releasePointerCapture(e.pointerId); } catch {}
+  kickExactIdle();
 });
 
 canvas.addEventListener('lostpointercapture', e => {
@@ -414,10 +478,31 @@ function applyWheelZoom(){
 
   const r = canvas.getBoundingClientRect();
   const p = { x: wheelPoint.x - r.left, y: wheelPoint.y - r.top };
-  const zoomFactor = Math.pow(1.1, -wheelAccum / 120);
+  let zoomFactor = Math.pow(1.1, -wheelAccum / 120);
   wheelAccum = 0;
 
-  camera.zoomAround(p, zoomFactor);
+  // Device-aware soft caps with gentle friction near bounds
+  const perf = state._perf || {};
+  const base = Math.max(1.0, perf.simplifyDisableAtScale || 1.25);
+  let maxScale = Math.min(256, base * 4);
+  let minScale = Math.max(1/128, 1 / (base * 64));
+  if (perf.unlockExtreme) { maxScale = 1e6; minScale = 1e-6; }
+
+  // Friction: reduce zoom step as we approach caps (within 10%)
+  const scale = camera.scale;
+  const clamp01 = (x) => Math.max(0, Math.min(1, x));
+  const smooth = (t) => (t*t*(3 - 2*t));
+  const upProx  = clamp01((scale - maxScale * 0.9) / (maxScale * 0.1));   // 0..1 as we near max
+  const dnProx  = clamp01((minScale * 1.1 - scale) / (minScale * 0.1));  // 0..1 as we near min
+  if (zoomFactor > 1) {
+    const k = 1 - smooth(upProx);
+    zoomFactor = 1 + (zoomFactor - 1) * k;
+  } else if (zoomFactor < 1) {
+    const k = 1 - smooth(dnProx);
+    zoomFactor = 1 + (zoomFactor - 1) * k;
+  }
+
+  camera.zoomAround(p, zoomFactor, minScale, maxScale);
 
   scheduleRender();
 
@@ -447,6 +532,7 @@ canvas.addEventListener('wheel', (e) => {
   wheelAccum += e.deltaY;
   wheelPoint.x = e.clientX; wheelPoint.y = e.clientY;
   if (!wheelRAF) wheelRAF = requestAnimationFrame(applyWheelZoom);
+  kickExactIdle();
 }, { passive:false });
 
 window.addEventListener('keydown', (e) => {
@@ -495,6 +581,7 @@ function applyCameraFromURL(){
   if (Number.isFinite(s) && Number.isFinite(tx) && Number.isFinite(ty)) {
     camera.scale = s; camera.tx = tx; camera.ty = ty;
     camera.setHome(s, tx, ty);
+    try { camera.setDocHome(s, tx, ty); } catch {}
     scheduleRender();
   }
 }
@@ -696,6 +783,16 @@ subscribe(() => {
 });
 
 loadAutosave(state);
+const loadedProfile = loadPerfProfile();
+if (loadedProfile && !state._perfBase) {
+  state._perfBase = { simplifyDisableAtScale: loadedProfile.simplifyDisableAtScale || 1.25, lodPxTol: loadedProfile.lodPxTol || 0.3 };
+}
+createAdvPane();
+ensureAdvancedItem();
+if (!loadedProfile) {
+  // First run: auto-calibrate shortly after UI becomes responsive
+  setTimeout(() => scheduleAutoCalibration('first_run'), 1200);
+}
 applyAdaptiveGridCell();
 rebuildIndexAsync();
 applyCameraFromURL();
@@ -751,8 +848,17 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape') hideCtxMen
 window.addEventListener('resize', hideCtxMenu);
 window.addEventListener('scroll', hideCtxMenu, true);
 
-ctxResetView?.addEventListener('click', () => {
-  camera.resetToHome();
+ctxResetView?.addEventListener('click', async () => {
+  try {
+    // If a renormalization bake is running, wait for it to finish to avoid visual glitches
+    await whenRenormalized();
+  } catch {}
+  // End any navigation snapshot mode before resetting view
+  try { endNavSnapshot(); } catch {}
+  // Reset to immutable doc home for consistent result
+  try { camera.resetToDocHome(); } catch { camera.resetToHome(); }
+  // Force exact render after reset
+  state._renderExact = true;
   hideCtxMenu();
   scheduleRender();
 });
@@ -776,6 +882,100 @@ ctxSavePNG?.addEventListener('click', async () => {
   URL.revokeObjectURL(url);
   hideCtxMenu();
 });
+
+// --- Advanced settings ------------------------------------------------------
+function persistPerfProfile() {
+  try { localStorage.setItem('dc_perf_profile', JSON.stringify(state._perf)); } catch {}
+}
+
+function applyPerfMode(mode) {
+  const p = state._perf || {};
+  // Establish a base on first use (derived from current profile)
+  if (!state._perfBase) state._perfBase = { simplifyDisableAtScale: p.simplifyDisableAtScale || 1.25, lodPxTol: p.lodPxTol || 0.3 };
+  const base = state._perfBase;
+  let next = { ...p, mode };
+  if (mode === 'performance') {
+    next.lodPxTol = Math.min(0.8, Math.max(base.lodPxTol, 0.5));
+    next.simplifyDisableAtScale = Math.max(1.25, base.simplifyDisableAtScale * 0.5);
+  } else if (mode === 'quality') {
+    next.lodPxTol = Math.max(0.2, base.lodPxTol * 0.6);
+    next.simplifyDisableAtScale = Math.min(512, base.simplifyDisableAtScale * 2);
+  } else { // balanced
+    next.lodPxTol = base.lodPxTol;
+    next.simplifyDisableAtScale = base.simplifyDisableAtScale;
+  }
+  state._perf = next;
+  persistPerfProfile();
+  scheduleRender();
+}
+
+function createAdvPane() {
+  if (document.getElementById('advOverlay')) return;
+  const overlay = document.createElement('div');
+  overlay.id = 'advOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;display:none;background:rgba(0,0,0,.35);z-index:10000';
+  const pane = document.createElement('div');
+  pane.id = 'advPane';
+  pane.style.cssText = 'position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);min-width:320px;max-width:90vw;padding:14px 16px;border-radius:12px;background:var(--glass, #151a21cc);border:1px solid var(--border, #2a313c);box-shadow:0 18px 44px rgba(0,0,0,.35);color:var(--text,#e7ebf3)';
+  pane.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px">
+      <strong>Advanced Settings</strong>
+      <button id="advClose" class="btn" style="padding:4px 10px">Close</button>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:12px">
+      <div>
+        <div style="font:600 12px system-ui;opacity:.8;margin-bottom:6px">Rendering Mode</div>
+        <label style="display:flex;gap:6px;align-items:center;margin:4px 0"><input type="radio" name="advMode" value="performance"> Performance (faster)</label>
+        <label style="display:flex;gap:6px;align-items:center;margin:4px 0"><input type="radio" name="advMode" value="balanced"> Balanced (default)</label>
+        <label style="display:flex;gap:6px;align-items:center;margin:4px 0"><input type="radio" name="advMode" value="quality"> Quality (sharper)</label>
+      </div>
+      <div>
+        <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="advExtreme" title="May be slow or unstable at very deep zoom."> Unlock extreme zoom (may be slow)</label>
+        <div style="font:12px system-ui; opacity:.72; margin-top:4px">Reset View still returns to your starting view.</div>
+      </div>
+    </div>
+  `;
+  overlay.appendChild(pane);
+  document.body.appendChild(overlay);
+
+  const sync = () => {
+    const p = state._perf || {};
+    const mode = p.mode || 'balanced';
+    const radios = pane.querySelectorAll('input[name="advMode"]');
+    radios.forEach(r => { r.checked = (r.value === mode); });
+    const chk = pane.querySelector('#advExtreme');
+    chk.checked = !!p.unlockExtreme;
+  };
+  sync();
+
+  pane.querySelector('#advClose')?.addEventListener('click', () => { overlay.style.display = 'none'; });
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.style.display = 'none'; });
+  pane.querySelectorAll('input[name="advMode"]').forEach(el => {
+    el.addEventListener('change', () => { applyPerfMode(el.value); });
+  });
+  pane.querySelector('#advExtreme')?.addEventListener('change', (e) => {
+    state._perf = state._perf || {};
+    state._perf.unlockExtreme = !!e.target.checked;
+    persistPerfProfile();
+  });
+
+  window._openAdvanced = () => { sync(); overlay.style.display = 'block'; };
+}
+
+function ensureAdvancedItem() {
+  const menu = document.getElementById('ctxMenu');
+  if (!menu) return;
+  if (document.getElementById('ctxAdvanced')) return;
+  try {
+    const sep = document.createElement('div'); sep.className = 'sep';
+    const item = document.createElement('div'); item.id = 'ctxAdvanced'; item.className = 'item'; item.setAttribute('role','menuitem');
+    item.textContent = 'Advanced…';
+    item.addEventListener('click', () => { hideCtxMenu(); window._openAdvanced?.(); });
+    menu.appendChild(sep); menu.appendChild(item);
+  } catch {}
+}
+
+// Manual calibration removed
 
 function resetAppStateToBlank() {
   state.strokes.splice(0, state.strokes.length);
@@ -845,6 +1045,10 @@ export function openDoc(docOrId) {
     camera.scale = 1.25; camera.tx = 0; camera.ty = 0;
   }
   camera.setHome(camera.scale, camera.tx, camera.ty);
+  try {
+    const home = doc.createdCamera || { s: camera.scale, tx: camera.tx, ty: camera.ty };
+    camera.setDocHome(Number.isFinite(home.s)?home.s:camera.scale, Number.isFinite(home.tx)?home.tx:camera.tx, Number.isFinite(home.ty)?home.ty:camera.ty);
+  } catch {}
 
   showCanvasView();
   scheduleRender();
@@ -876,3 +1080,87 @@ function needsAnimFrame(st){
   if (needsAnimFrame(state) || state._anim?.playing) scheduleRender();
   requestAnimationFrame(tick);
 })();
+// Load saved performance profile (if any)
+function loadPerfProfile(){
+  try{
+    const raw = localStorage.getItem('dc_perf_profile');
+    if (!raw) return null;
+    const p = JSON.parse(raw);
+    if (p && typeof p === 'object') { state._perf = p; return p; }
+  } catch {}
+  return null;
+}
+
+// Device calibration: measure render time across zoom levels and store thresholds
+let _calibrating = false;
+async function calibrateDevicePerformance(){
+  if (_calibrating) return;
+  _calibrating = true;
+  let off = null, octx = null;
+  try {
+    off = new OffscreenCanvas(canvas.width, canvas.height);
+    octx = off.getContext('2d', { alpha: false });
+  } catch {
+    const c = document.createElement('canvas'); c.width = canvas.width; c.height = canvas.height; off = c;
+    octx = c.getContext('2d');
+  }
+  const offLike = { clientWidth: canvas.clientWidth, clientHeight: canvas.clientHeight };
+  const testCam = makeCamera(1, 0, 0);
+  const prevExact = state._renderExact;
+  const testDpr = Math.max(1, window.devicePixelRatio || 1);
+
+  function measure(scale, exact){
+    return new Promise(res => {
+      testCam.scale = scale; testCam.tx = 0; testCam.ty = 0;
+      const oldExact = state._renderExact;
+      state._renderExact = !!exact;
+      // warm
+      render(state, testCam, octx, offLike, { dpr: testDpr, skipSnapshotPath: true, forceTrueComposite: true });
+      const t0 = performance.now();
+      render(state, testCam, octx, offLike, { dpr: testDpr, skipSnapshotPath: true, forceTrueComposite: true });
+      const t1 = performance.now();
+      state._renderExact = oldExact;
+      res(t1 - t0);
+    });
+  }
+
+  // Zoom-in calibration: find largest scale where exact rendering stays <= 16.7ms
+  const zIn = [1,2,4,8,16,32,64,128,256];
+  let simplifyDisableAtScale = 1.25;
+  for (const s of zIn){
+    const dt = await measure(s, /*exact*/true);
+    if (dt <= 16.7) simplifyDisableAtScale = s; else break;
+  }
+
+  // Zoom-out calibration: choose smallest px tolerance that stays <=16.7ms over set scales
+  const zOut = [0.5, 0.25, 0.125, 0.0625, 0.03125];
+  const pxOpts = [0.2, 0.3, 0.4, 0.5, 0.6];
+  let bestPxTol = 0.3;
+  for (const px of pxOpts){
+    const prev = state._perf || {};
+    state._perf = { ...prev, lodPxTol: px, simplifyDisableAtScale };
+    let ok = true;
+    for (const s of zOut){
+      const dt = await measure(s, /*exact*/false);
+      if (dt > 16.7) { ok = false; break; }
+    }
+    if (ok) { bestPxTol = px; break; }
+  }
+
+  const perf = { simplifyDisableAtScale, lodPxTol: bestPxTol, ts: Date.now(), dpr: testDpr, w: canvas.width, h: canvas.height };
+  state._perf = perf;
+  // Preserve baseline for Advanced modes
+  state._perfBase = { simplifyDisableAtScale, lodPxTol: bestPxTol };
+  try { localStorage.setItem('dc_perf_profile', JSON.stringify(perf)); } catch {}
+  state._renderExact = prevExact;
+  scheduleRender();
+  _calibrating = false;
+}
+
+// Debounced auto-calibration scheduler
+let _calibTimer = 0;
+function scheduleAutoCalibration(reason = ''){
+  try { telemetry.record('calib.schedule', { reason }); } catch {}
+  clearTimeout(_calibTimer);
+  _calibTimer = setTimeout(() => { calibrateDevicePerformance(); }, 1200);
+}

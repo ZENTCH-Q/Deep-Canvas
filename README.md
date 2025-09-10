@@ -1,67 +1,71 @@
 # Deep Canvas
 
-Fast, offline **infinite canvas** for sketching, whiteboarding, and motion-style doodles.  
+Fast, offline infinite canvas for sketching, whiteboarding, and motion-style doodles.
 Privacy-first desktop app — no accounts, no cloud, everything saved locally.
 
-https://github.com/ZENTCH-Q/Deep-Canvas.git
+https://github.com/ZENTCH-Q/Deep-Canvas
 
 Animation Showcase:
-
 
 ![ezgif com-optimize](https://github.com/user-attachments/assets/2e5f2db3-d912-4813-b81c-9ea00ab305c2)
 
 ---
 Extreme Zoom:
 
-
 ![DeepCanvas2025-08-1603-42-39-ezgif com-video-to-gif-converter](https://github.com/user-attachments/assets/5af8d46b-5c67-4f8d-b4d6-d52f24cc0758)
 
-## ✨ Features
+## Features
 
-- **Blazing renderer** — spatial index + LOD simplification keeps big drawings smooth
-- **Infinite pan & zoom** — zoom around cursor, buttery panning
-- **Brushes** — pen, marker, glow, dashed; eraser
-- **Shapes** — line, rectangle, ellipse; optional fill
-- **Selection HUD** — resize/rotate handles, live style/animation layers
-- **Style / Anim layers** — width, opacity, glow, hue, dash; spin, sway, pulse, bounce, orbit, shake
-- **Gallery as landing** — create “+”, **rename** (double-click title), **delete**, **thumbnails from last view**
-- **Autosave + history** — undo/redo stack, background autosave
-- **Export** — save current viewport to PNG
-- **Offline** — zero telemetry, runs locally
+- Fast renderer — spatial index + smart simplification
+- Infinite pan & zoom — zoom around cursor, smooth panning
+- Brushes — pen, marker, glow, dashed; eraser
+- Shapes — line, rectangle, ellipse; optional fill
+- Selection HUD — resize/rotate handles, live style/animation layers
+- Gallery — create “+”, rename (double‑click title), delete, thumbnail from last view
+- Autosave + history — undo/redo, background save
+- Export — save current viewport to PNG
+- Offline — no accounts, no network
+
+### Performance & Zoom
+- Auto‑tuned for your device at first run (and when display changes)
+- Advanced… (right‑click) lets you pick:
+  - Rendering Mode: Performance / Balanced / Quality
+  - Unlock extreme zoom (may be slow and buggy)
+- Reset View always returns to your starting view for the canvas
 
 ---
 
-## 🚀 Install
+## Install
 
 ### Windows (recommended)
-Grab the latest `Deep Canvas x.y.z.exe` from **Releases** and install.  
-If SmartScreen warns, click **More info → Run anyway** (unsigned builds).
+Grab the latest Deep Canvas x.y.z.exe from Releases and install.
+If SmartScreen warns, click More info → Run anyway (unsigned builds).
 
-## 🧭 Quick start & hotkeys
+## Quick start & hotkeys
 
-- **Tools:** Draw, Paint (bucket), Erase, Delete, Pan, Line/Rect/Ellipse, Select
-- **Pan:** hold **Space**, drag
-- **Zoom:** mouse wheel / trackpad (zooms around cursor)
-- **Undo / Redo:** `Ctrl/⌘ + Z`, `Ctrl+Y` or `Shift+⌘ + Z`
-- **Right-click** on canvas: context menu (Reset View, Save PNG, Delete Selected)
-- **Gallery:**
-  - Click **+** to create
-  - **Double-click** card image to open canvas
-  - **Double-click** title to rename
-  - **⋯** menu → **Delete**
-  - Thumbnails show the **last camera view** you left the canvas in
+- Tools: Draw, Paint (bucket), Erase, Delete, Pan, Line/Rect/Ellipse, Select
+- Pan: hold Space, drag
+- Zoom: mouse wheel / trackpad (zooms around cursor)
+- Undo / Redo: Ctrl/Cmd+Z, Ctrl+Y or Shift+Cmd+Z
+- Right‑click on canvas: Reset View, Save PNG, Advanced…
+- Gallery:
+  - Click + to create
+  - Double‑click card image to open canvas
+  - Double‑click title to rename
+  - … menu → Delete
 
 ---
 
-## 🛠️ Build from source
+## Build from source
 
-**Prereqs:** Node 18+ (or 20+)
+Prereqs: Node 18+ (or 20+)
 
 ```bash
 # clone
-git clone https://github.com/<you>/<repo>.git
-cd deep-canvas
+git clone https://github.com/ZENTCH-Q/Deep-Canvas.git
+cd Deep-Canvas
 
 # dev
 npm install
 npm run dev
+```

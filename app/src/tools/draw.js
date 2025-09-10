@@ -12,7 +12,7 @@ const ZOOM_RESYNC_EPS = 0.08;
 export class DrawTool {
   constructor({ canvas, ctx, overlay, camera, state }){
     this.canvas = canvas; this.ctx = ctx; this.overlay = overlay;
-    this.camera=camera; this.state=state;
+    this.camera = camera; this.state = state;
     this.cur = null; this.group = null; this.lastScreen = null;
     this._widthScaleAnchor = null;
 
@@ -89,7 +89,10 @@ export class DrawTool {
     this.ctx.beginPath();
     this.ctx.moveTo(pts[0], pts[1]);
 
-    const sTol = 0.75 / Math.max(1e-8, this.camera.scale);
+    // Disable simplification when zoomed in to avoid snappy look (profile-aware)
+    const threshold = this.state?._perf?.simplifyDisableAtScale ?? 1.25;
+    const simplify = this.camera.scale < threshold;
+    const sTol = simplify ? Math.min(0.75 / Math.max(1e-8, this.camera.scale), Math.max(0.5, baseW) * 0.6) : 0;
     let lx = pts[0], ly = pts[1];
     for (let i = 3; i < n; i += 3){
       const x = pts[i], y = pts[i+1];
@@ -206,3 +209,4 @@ export class DrawTool {
     this._ringClear();
   }
 }
+

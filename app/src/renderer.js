@@ -14,8 +14,10 @@ function tolWorld(camera, fast = false){
   return fast ? base * 1.6 : base;
 }
 function pickEpsilon(camera, fast){
+  // Base pixel tolerance (px). Quantize to avoid flicker across tiny scale changes.
   const pxTol = fast ? 0.6 : 0.3;
-  return pxTol / Math.max(1e-8, camera.scale);
+  const pxQ = Math.max(0.25, Math.round(pxTol * 4) / 4);
+  return pxQ / Math.max(1e-8, camera.scale);
 }
 
 function hash32(s){
@@ -76,10 +78,16 @@ export function applyBrushStyle(ctx, camera, s, fast, dpr = 1) {
 }
 export function strokeCommonSetup(ctx, camera, s, fast) {
   if (s.mode === 'erase') {
-    ctx.globalCompositeOperation = 'destination-out';
+    // Paint with the background color instead of cutting holes, so eraser matches canvas color
+    ctx.globalCompositeOperation = 'source-over';
     ctx.globalAlpha = 1;
     ctx.shadowBlur = 0;
-    ctx.strokeStyle = 'rgba(0,0,0,1)';
+    try {
+      const bg = (s.bgColor || s.backgroundColor || s.canvasBg || (typeof window !== 'undefined' ? window._endless?.state?.background?.color : null)) || '#ffffff';
+      ctx.strokeStyle = bg;
+    } catch {
+      ctx.strokeStyle = '#ffffff';
+    }
   } else {
     ctx.globalCompositeOperation = (s.brush === 'marker' && !fast) ? 'multiply' : 'source-over';
     ctx.globalAlpha = s.alpha ?? 1;
@@ -766,7 +774,7 @@ function rdpSimplifyTA(pts, n, epsilon) {
   }
   return out;
 }
-function getLODView(stroke, camera, fast) {
+function getLODView(stroke, camera, fast, state) {
   if (!stroke || stroke.kind !== 'path' || stroke.n == null || !stroke.pts || typeof stroke.pts.BYTES_PER_ELEMENT !== 'number') {
     return { pts: stroke?.pts, n: stroke?.n, usedLOD: false };
   }
@@ -774,10 +782,12 @@ function getLODView(stroke, camera, fast) {
   if ((stroke.n / STRIDE) <= 128) return orig;
 
   try {
-    const now = performance.now();
-    const ageMs = now - (stroke.timestamp || 0);
-    if (ageMs < 220) return orig; 
-    const epsBase = pickEpsilon(camera, fast);
+    // If we want exact geometry or are zoomed in past threshold, skip LOD entirely
+    const simplifyDisableAt = state?._perf?.simplifyDisableAtScale ?? 1.25;
+    if (state?._renderExact || camera.scale >= simplifyDisableAt) return orig;
+
+    const pxTol = state?._perf?.lodPxTol ?? (fast ? 0.6 : 0.3);
+    const epsBase = (Math.max(0.25, Math.round(pxTol * 4) / 4)) / Math.max(1e-8, camera.scale);
     const w = Math.max(0.5, stroke.w || 1);
     const eps = Math.min(epsBase, w * 0.5); 
     try {
@@ -786,16 +796,19 @@ function getLODView(stroke, camera, fast) {
       if (diag < eps * 3) return orig;
     } catch {}
 
+    // Cache by quantized pixel epsilon for stability
+    const pxEps = Math.round((eps * Math.max(1e-8, camera.scale)) * 4) / 4; // quantize in px
+    const key = `px:${pxEps}`;
     stroke._lodCache = stroke._lodCache || new Map();
-    if (stroke._lodCache.has(eps)) {
-      const cached = stroke._lodCache.get(eps);
+    if (stroke._lodCache.has(key)) {
+      const cached = stroke._lodCache.get(key);
       if (cached && cached.pts && cached.n > 0) return { ...cached, usedLOD: true };
     }
     const simplified = rdpSimplifyTA(stroke.pts, stroke.n, eps);
     const result = { pts: simplified, n: simplified.length };
     if (result.n >= stroke.n * 0.95) return orig;
 
-    stroke._lodCache.set(eps, result);
+    stroke._lodCache.set(key, result);
     return { ...result, usedLOD: true };
   } catch {
     return orig;
@@ -997,12 +1010,15 @@ export function render(state, camera, ctx, canvasLike, opts = {}) {
     candidateSet = new Set(state.strokes);
   }
 
+  let didClip = false;
+  let clipRestored = false;
   if (!baking) {
     ctx.save();
     const padClip = Math.max(2, (ctx.lineWidth || 1) * 2) / Math.max(1e-8, camera.scale);
     ctx.beginPath();
     ctx.rect(view.minx - padClip, view.miny - padClip, (view.maxx - view.minx) + padClip * 2, (view.maxy - view.miny) + padClip * 2);
     ctx.clip();
+    didClip = true;
   }
 
   let visibleCount = 0;
@@ -1071,14 +1087,18 @@ export function render(state, camera, ctx, canvasLike, opts = {}) {
         const live = state._drawingActive || state._erasingActive || state._transformActive;
         const viewTA = live
           ? { pts: s.pts, n: s.n, usedLOD: false }
-          : getLODView(s, camera, fast);
+          : getLODView(s, camera, fast, state);
         const pts = viewTA.pts, n = viewTA.n;
         if (!pts || n < STRIDE * 2) { if (animApplied) ctx.restore(); if (unbaked) ctx.restore(); continue; }
         const tolLive = live ? (0.18 / Math.max(1e-8, camera.scale)) : null; // ~0.18px at 1×
         if (viewTA.usedLOD) {
           ctx.beginPath();
           ctx.moveTo(pts[0], pts[1]);
-          drawPolylineFastWorldTA(ctx, pts, n, camera, 0, (n / STRIDE) - 1, fast, tolLive);
+          // Disable simplification at high zoom-in to avoid snappy look
+          const simplify = camera.scale < (state?._perf?.simplifyDisableAtScale ?? 1.25);
+          const tolCap = Math.max(0.5, ctx.lineWidth) * 0.6;
+          const tol = simplify ? Math.min(tolLive ?? tolWorld(camera, fast), tolCap) : 0;
+          drawPolylineFastWorldTA(ctx, pts, n, camera, 0, (n / STRIDE) - 1, fast, tol);
         } else {
           const viewInStrokeSpace = unbaked ? invXformBBox(view, bake.s, bake.tx, bake.ty) : view;
           let vr = computeVisibleRange(s, viewInStrokeSpace, Math.max(1, ctx.lineWidth) * 2);
@@ -1086,11 +1106,17 @@ export function render(state, camera, ctx, canvasLike, opts = {}) {
           if (!vr) {
             s._chunks = null;
             ctx.moveTo(pts[0], pts[1]);
-            drawPolylineFastWorldTA(ctx, pts, n, camera, 0, (n / STRIDE) - 1, fast, tolLive);
+            const simplify = camera.scale < (state?._perf?.simplifyDisableAtScale ?? 1.25);
+            const tolCap = Math.max(0.5, ctx.lineWidth) * 0.6;
+            const tol = simplify ? Math.min(tolWorld(camera, fast), tolCap) : 0;
+            drawPolylineFastWorldTA(ctx, pts, n, camera, 0, (n / STRIDE) - 1, fast, tol);
           } else {
             const off = vr.i0 * STRIDE;
             ctx.moveTo(pts[off], pts[off + 1]);
-            drawPolylineFastWorldTA(ctx, pts, n, camera, vr.i0, vr.i1, fast, tolLive);
+            const simplify = camera.scale < (state?._perf?.simplifyDisableAtScale ?? 1.25);
+            const tolCap = Math.max(0.5, ctx.lineWidth) * 0.6;
+            const tol = simplify ? Math.min(tolWorld(camera, fast), tolCap) : 0;
+            drawPolylineFastWorldTA(ctx, pts, n, camera, vr.i0, vr.i1, fast, tol);
           }
         }
 
@@ -1118,7 +1144,9 @@ export function render(state, camera, ctx, canvasLike, opts = {}) {
         if (pts.length < 2) { if (animApplied) ctx.restore(); if (unbaked) ctx.restore(); continue; }
         ctx.beginPath();
         ctx.moveTo(pts[0].x, pts[0].y);
-        const tw = tolWorld(camera, fast);
+        // Disable simplification at high zoom-in to avoid snappy look
+        const simplify = camera.scale < (state?._perf?.simplifyDisableAtScale ?? 1.25);
+        const tw = simplify ? Math.min(tolWorld(camera, fast), Math.max(0.5, ctx.lineWidth) * 0.6) : 0;
         let lx = pts[0].x, ly = pts[0].y;
         for (let k = 1; k < pts.length; k++) {
           const p = pts[k], dx = p.x - lx, dy = p.y - ly;
@@ -1323,7 +1351,52 @@ if (state.selection && state.selection.size) {
       );
     }
   }
-}
+  }
+
+  // Fallback: if nothing rendered but we have strokes, do a conservative full render pass to avoid blank frames
+  if (visibleCount === 0 && strokes.length > 0) {
+    try {
+      if (didClip && !clipRestored) { ctx.restore?.(); clipRestored = true; } // remove clip just in case
+    } catch {}
+    // No clip; draw everything quickly but safely
+    for (let i = 0; i < strokes.length; i++) {
+      const s0 = strokes[i];
+      const brush = (s0.brush === 'taper' || s0.brush === 'square') ? 'pen' : s0.brush;
+      const s = (brush === s0.brush) ? s0 : { ...s0, brush };
+
+      applyBrushStyle(ctx, camera, s, /*fast=*/true, dpr);
+      strokeCommonSetup(ctx, camera, s, /*fast=*/true);
+      const baseW = Math.max(0.75 / Math.max(1, camera.scale), (s.w || 1));
+      ctx.lineWidth = baseW;
+      if (s.kind === 'path') {
+        if (s.pts && s.n != null) {
+          const viewTA = { pts: s.pts, n: s.n, usedLOD: false };
+          const pts = viewTA.pts, n = viewTA.n;
+          if (!pts || n < STRIDE * 2) continue;
+          ctx.beginPath();
+          ctx.moveTo(pts[0], pts[1]);
+          const tolCap = Math.max(0.5, ctx.lineWidth) * 0.6;
+          const tol = Math.min(tolWorld(camera, /*fast*/true), tolCap);
+          drawPolylineFastWorldTA(ctx, pts, n, camera, 0, (n / STRIDE) - 1, /*fast*/true, tol);
+          ctx.stroke();
+        } else if (Array.isArray(s.pts)) {
+          const pts = s.pts || [];
+          if (pts.length < 2) continue;
+          ctx.beginPath();
+          ctx.moveTo(pts[0].x, pts[0].y);
+          const tw = Math.min(tolWorld(camera, /*fast*/true), Math.max(0.5, ctx.lineWidth) * 0.6);
+          let lx = pts[0].x, ly = pts[0].y;
+          for (let k = 1; k < pts.length; k++) {
+            const p = pts[k], dx = p.x - lx, dy = p.y - ly;
+            if ((dx * dx + dy * dy) >= tw * tw) { ctx.lineTo(p.x, p.y); lx = p.x; ly = p.y; }
+          }
+          ctx.stroke();
+        }
+      } else if (s.kind === 'shape') {
+        drawShapeWorld(ctx, s, camera, dpr);
+      }
+    }
+  }
 
   if (state._marquee) {
     ctx.save();
@@ -1339,7 +1412,7 @@ if (state.selection && state.selection.size) {
     ctx.restore();
   }
 
-  if (!baking) ctx.restore?.();
+  if (didClip && !clipRestored) ctx.restore?.();
 
   return { visible: visibleCount, tiles, complete: true };
 }

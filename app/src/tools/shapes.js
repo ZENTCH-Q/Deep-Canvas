@@ -204,11 +204,17 @@ class BaseShapeTool {
       const world  = this.camera.screenToWorld(screen);
       const hit = hitSelectionUI(world, this.state, this.camera);
       if (hit) {
+        // If user clicks on selection UI (handles/inside), delegate to Select for transform
         this._delegatedToSelect = true;
         try { this.state.setTool?.('select'); } catch {}
         this.state.tool = 'select';
         this.state._selectToolSingleton?.onPointerDown?.(e);
         return;
+      } else if (this.state.selection && this.state.selection.size) {
+        // Clicked outside selection UI: clear selection so user can keep drawing
+        try { this.state.selection.clear(); } catch {}
+        this.state._transformActive = false;
+        scheduleRender();
       }
     }
     this.shift = !!e.shiftKey;
@@ -282,20 +288,12 @@ class BaseShapeTool {
 
     // One compact history entry (real draw)
     this.state.history?.pushAdd?.(this.shape);
-  
+
+    // Keep drawing: keep current tool, but briefly select the new shape so the box is visible.
     try {
       this.state.selection?.clear?.();
       this.state.selection?.add?.(this.shape);
-      this.state._transformActive = true;
-    } catch {}
-
-    // Immediately switch to the Select tool so the next drag manipulates handles
-    try {
-      if (typeof this.state.setTool === 'function') {
-        this.state.setTool('select');
-      } else {
-        this.state.tool = 'select';
-      }
+      this.state._transformActive = false; // show box, but do not enter transform mode
     } catch {}
     this.state._hoverHandle = null;
     this.state._activeHandle = null;

@@ -1,4 +1,6 @@
 // src/state.js
+import { telemetry } from './utils/telemetry.js';
+import { queueSetItem, setItemWithRetriesSync, safeGetItem, safeRemoveItem } from './utils/storage.js';
 
 export const state = {
   strokes: [],
@@ -24,6 +26,8 @@ export const state = {
   _navAllowLive: false,
   _marquee: null,
   _transformActive: false,
+  // Refine rendering with exact geometry when idle
+  _renderExact: true,
   clipboard: null,
   _audio: { t: 0, playing: false },
   _anim: { t: 0, playing: true },
@@ -115,12 +119,39 @@ export function importJSON(raw, s = state) {
   } catch { return false; }
 }
 
+const AS_KEY = 'endless_autosave';
+const AS_KEY_PREV = 'endless_autosave_prev';
+const AS_KEY_NEXT = 'endless_autosave_next';
+
+async function writeAutosave(value) {
+  telemetry.record('autosave.write.start', { size: value ? value.length : 0 });
+  const cur = safeGetItem(AS_KEY) || '';
+  await queueSetItem(AS_KEY_NEXT, value);
+  if (cur) await queueSetItem(AS_KEY_PREV, cur);
+  await queueSetItem(AS_KEY, value);
+  await safeRemoveItem(AS_KEY_NEXT);
+  telemetry.record('autosave.write.done', { size: value ? value.length : 0 });
+  state.dirty = false;
+}
+
+function writeAutosaveSync(value) {
+  try {
+    const cur = safeGetItem(AS_KEY) || '';
+    setItemWithRetriesSync(AS_KEY_NEXT, value);
+    if (cur) setItemWithRetriesSync(AS_KEY_PREV, cur);
+    setItemWithRetriesSync(AS_KEY, value);
+    try { localStorage.removeItem(AS_KEY_NEXT); } catch {}
+    telemetry.record('autosave.write.sync', { size: value ? value.length : 0 });
+    state.dirty = false;
+  } catch {}
+}
+
 function saveNow() {
   try {
-    localStorage.setItem('endless_autosave_prev', localStorage.getItem('endless_autosave') || '');
-    localStorage.setItem('endless_autosave', serialize());
-    state.dirty = false;
-  } catch { }
+    const payload = serialize();
+    // fire and forget (coalesced by queueSetItem)
+    void writeAutosave(payload);
+  } catch {}
 }
 
 function coercePathPtsIfNeeded(st) {
@@ -193,60 +224,61 @@ function normalizeLoadedStroke(st) {
 
 export function loadAutosave(s) {
   try {
-    let raw = localStorage.getItem('endless_autosave');
-    if (!raw) return false;
+    const candidates = [];
+    try { const r = localStorage.getItem(AS_KEY_NEXT); if (r) candidates.push(r); } catch {}
+    try { const r = localStorage.getItem(AS_KEY); if (r) candidates.push(r); } catch {}
+    try { const r = localStorage.getItem(AS_KEY_PREV); if (r) candidates.push(r); } catch {}
 
-    let doc = JSON.parse(raw);
-
-    if (!doc || !Array.isArray(doc.strokes) || doc.strokes.length === 0) {
-      const prevRaw = localStorage.getItem('endless_autosave_prev');
-      if (prevRaw) {
-        try { doc = JSON.parse(prevRaw); } catch { }
-      }
+    let best = null;
+    let bestTs = -1;
+    for (const raw of candidates) {
+      try {
+        const doc = JSON.parse(raw);
+        if (!doc || !Array.isArray(doc.strokes)) continue;
+        const ts = Number(doc.meta?.modified) || 0;
+        if (ts > bestTs) { best = doc; bestTs = ts; }
+      } catch {}
     }
+    if (!best || !Array.isArray(best.strokes)) return false;
 
-    if (Array.isArray(doc?.strokes)) {
-      const fixed = [];
-      for (const st of doc.strokes) {
-        if (!st) continue;
-        fixed.push(normalizeLoadedStroke(st));
-      }
-      s.strokes.splice(0, s.strokes.length, ...fixed);
-      if (doc.background && typeof doc.background.color === 'string') {
-        const a = Number(doc.background.alpha);
-        s.background = {
-          color: doc.background.color,
-          alpha: Number.isFinite(a) ? Math.max(0, Math.min(1, a)) : 1
-        };
-      }
-      if (doc.meta) {
-        s.meta = {
-          id: doc.meta.id ?? s.meta?.id ?? null,
-          name: doc.meta.name ?? s.meta?.name ?? 'Untitled',
-          modified: doc.meta.modified ?? Date.now()
-        };
-      }
-      s.selection?.clear?.();
-      s._bake = null;
-      s._deferIndex = false;
-      s._transformActive = false;
-
-      scheduleRender();
-      return true;
+    const fixed = [];
+    for (const st of best.strokes) if (st) fixed.push(normalizeLoadedStroke(st));
+    s.strokes.splice(0, s.strokes.length, ...fixed);
+    if (best.background && typeof best.background.color === 'string') {
+      const a = Number(best.background.alpha);
+      s.background = {
+        color: best.background.color,
+        alpha: Number.isFinite(a) ? Math.max(0, Math.min(1, a)) : 1
+      };
     }
-  } catch { }
+    if (best.meta) {
+      s.meta = {
+        id: best.meta.id ?? s.meta?.id ?? null,
+        name: best.meta.name ?? s.meta?.name ?? 'Untitled',
+        modified: best.meta.modified ?? Date.now()
+      };
+    }
+    s.selection?.clear?.();
+    s._bake = null; s._deferIndex = false; s._transformActive = false;
+    scheduleRender();
+    return true;
+  } catch {}
   return false;
 }
 
 window.addEventListener('beforeunload', () => {
-  if (state.dirty) {
-    try { localStorage.setItem('endless_autosave', serialize()); } catch { }
-  }
+  if (!state.dirty) return;
+  try {
+    const payload = serialize();
+    writeAutosaveSync(payload);
+  } catch {}
 });
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden && state.dirty) {
-    try { localStorage.setItem('endless_autosave', serialize()); } catch { }
-  }
+  if (!document.hidden || !state.dirty) return;
+  try {
+    const payload = serialize();
+    writeAutosaveSync(payload);
+  } catch {}
 });
 
 export function setDeferIndex(v) { state._deferIndex = !!v; }

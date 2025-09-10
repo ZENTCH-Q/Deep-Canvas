@@ -251,6 +251,16 @@ export class SelectTool {
           this.mode = 'move'; this.startBBox = bb;
         } else {
           this.mode = null;
+          // Clicked outside the transform box: if not hitting any stroke, clear selection
+          try {
+            const rWorld = pickRadius(this.camera, this.state, 12);
+            const hit = pickTopAt(this.downWorld, rWorld, { camera: this.camera, state: this.state });
+            if (!hit) {
+              try { this.state.selection?.clear?.(); } catch {}
+              this.state._transformActive = false;
+              scheduleRender();
+            }
+          } catch {}
         }
         if (this.mode){
           for (const s of this.state.selection) ensureObjectPoints(s);
@@ -367,6 +377,36 @@ export class SelectTool {
 
     const wasDragging = this.dragging;
     const hadMode = this.mode;
+
+    // If we had an active selection but clicked outside the transform box,
+    // treat it as a cancel even if the pick radius grazes the same stroke.
+    if (!wasDragging && !hadMode && this.state.selection && this.state.selection.size){
+      const rct = this.canvas.getBoundingClientRect();
+      const screen = { x: e.clientX - rct.left, y: e.clientY - rct.top };
+      const world  = this.camera.screenToWorld(screen);
+      const bb = selectionBBoxWorld(this.state);
+      if (bb){
+        const onHandle = !!hitHandle(world, bb, this.camera);
+        const inside   = pointInRect(world, bb);
+        if (!onHandle && !inside){
+          // Clicked outside selection UI
+          const pickR = pickRadius(this.camera, this.state);
+          const hit = pickTopAt(world, pickR, { camera: this.camera, state: this.state });
+          if (!hit || this.state.selection.has(hit)){
+            try { this.state.selection.clear(); } catch {}
+            this.state._transformActive = false;
+            scheduleRender();
+            this._clearMarquee();
+            this.beforeSnaps = null;
+            this.mode = null; this.handle = null; this.startBBox = null;
+            this.downScreen = null; this.downWorld = null; this.dragging = false; this.additive = false;
+            this._rotPivot = null; this._rotAngle0 = 0;
+            this.strictContain = false;
+            return;
+          }
+        }
+      }
+    }
 
     if (hadMode){
       const muts = [];

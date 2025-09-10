@@ -377,6 +377,7 @@
 @supports(padding: max(0px)){
   .g-fab{ bottom: calc(24px + env(safe-area-inset-bottom, 0px)); }
 }
+
 </style>
 </head>
 <body>
@@ -390,8 +391,12 @@
   </div>
 </section>
 
-<button id="newCanvasFAB" class="g-fab" type="button" aria-label="Create new canvas" title="New Canvas">
+<button id="newCanvasFAB_legacy" class="g-fab" type="button" aria-label="Create new canvas" title="New Canvas" style="display:none;">
   <span>＋</span>
+</button>
+
+<button id="newCanvasFAB" class="g-fab" type="button" aria-label="Create new canvas" title="New Canvas">
+  <span>+</span>
 </button>
 
 <div id="canvasContainer">
@@ -556,6 +561,15 @@
   <div class="sep"></div>
   <div id="ctxSavePNG" class="item" role="menuitem">💾 Save PNG</div>
 </div>
+
+  <!-- Debug pane (Ctrl+Alt+D to toggle) -->
+  <div id="debugPane" style="display:none;position:fixed;right:12px;bottom:12px;z-index:9999;max-width:38vw;max-height:48vh;overflow:auto;background:var(--glass);border:1px solid var(--border);border-radius:10px;padding:10px;box-shadow:0 8px 24px rgba(0,0,0,.35)">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px">
+      <strong>Debug</strong>
+      <button id="dbgClose" class="btn" style="padding:2px 8px">Close</button>
+    </div>
+    <pre id="debugText" style="white-space:pre-wrap;word-break:break-word;margin:0;font:12px/1.35 ui-monospace,Consolas,monospace"></pre>
+  </div>
 
 <script type="module" src="./src/main.js"></script>
 </body>
