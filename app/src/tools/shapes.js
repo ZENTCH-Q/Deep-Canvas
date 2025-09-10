@@ -36,7 +36,7 @@ function startShape(shape, camera, state, canvas, e) {
   return s;
 }
 
-function moveShape(shape, camera, state, canvas, e, constrain = false) {
+  function moveShape(shape, camera, state, canvas, e, constrain = false) {
   const r = canvas.getBoundingClientRect();
   let w = camera.screenToWorld({ x: e.clientX - r.left, y: e.clientY - r.top });
 
@@ -138,6 +138,23 @@ class BaseShapeTool {
         this.ctx.moveTo(a.x, a.y);
         this.ctx.lineTo(b.x, b.y);
         this.ctx.stroke();
+        // Arrowhead preview
+        if (s.arrow) {
+          const dx = b.x - a.x, dy = b.y - a.y;
+          const len = Math.hypot(dx, dy) || 1;
+          const ux = dx / len, uy = dy / len;
+          const size = Math.max(3 / Math.max(1, this.camera.scale), (s.w || 1) * 4);
+          const baseX = b.x - ux * size;
+          const baseY = b.y - uy * size;
+          const perpX = -uy, perpY = ux;
+          const wing = size * 0.6;
+          this.ctx.beginPath();
+          this.ctx.moveTo(b.x, b.y);
+          this.ctx.lineTo(baseX + perpX * wing, baseY + perpY * wing);
+          this.ctx.moveTo(b.x, b.y);
+          this.ctx.lineTo(baseX - perpX * wing, baseY - perpY * wing);
+          this.ctx.stroke();
+        }
         return;
       }
 
@@ -339,4 +356,12 @@ export class RectTool extends BaseShapeTool {
 
 export class EllipseTool extends BaseShapeTool {
   get shapeKind() { return 'ellipse'; }
+}
+
+export class ArrowTool extends BaseShapeTool {
+  get shapeKind() { return 'line'; }
+  onPointerDown(e) {
+    super.onPointerDown(e);
+    if (this.shape) this.shape.arrow = true;
+  }
 }

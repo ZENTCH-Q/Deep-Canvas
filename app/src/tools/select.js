@@ -344,7 +344,7 @@ export class SelectTool {
           s.start = { ...m.before.start }; s.end = { ...m.before.end };
         }
         s.w = m.before.w; s.bbox = { ...m.before.bbox };
-        if (this.mode === 'rotate' && s.kind === 'shape' && (s.shape === 'rect' || s.shape === 'ellipse')) {
+        if (this.mode === 'rotate' && s.kind === 'shape' && (s.shape === 'rect' || s.shape === 'ellipse' || s.shape === 'image')) {
           // keep size/position from 'before', only add rotation
           s.start = { ...m.before.start };
           s.end   = { ...m.before.end };

@@ -6,7 +6,7 @@ import { createTool } from './tools/index.js';
 import { initUI, getRecentColors, setRecentColors, clearRecentColors } from './ui.js';
 import { grid, applyWorkerIndex, rebuildIndex, clearIndex } from './spatial_index.js';
 import { saveViewportPNG, saveViewportThumb } from './export.js';
-import { removeStroke } from './strokes.js';
+import { removeStroke, addShape, selectForTransform } from './strokes.js';
 import { PanTool } from './tools/pan.js';
 import { attachHistory } from './history.js';
 import { initGalleryView, showGallery, hideGallery } from './gallery.js';
@@ -159,6 +159,9 @@ function prepareStrokeForSave(s) {
   delete out._lodCache;
   delete out._chunks;
   delete out._baked;
+  // Transient fields (not serializable)
+  delete out.img; // HTMLImageElement cache
+  delete out.bitmap; // any ImageBitmap cache
 
   if (out.kind === 'path') {
     const asObjs = [];
@@ -882,6 +885,101 @@ ctxSavePNG?.addEventListener('click', async () => {
   URL.revokeObjectURL(url);
   hideCtxMenu();
 });
+
+// --- Drag & Drop Images -----------------------------------------------------
+function handleDroppedImage(file, clientX, clientY) {
+  if (!file || !file.type || !file.type.startsWith('image/')) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    const dataURL = String(reader.result || '');
+    if (!dataURL) return;
+
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const r = canvas.getBoundingClientRect();
+        const cx = clientX - r.left;
+        const cy = clientY - r.top;
+        const world = camera.screenToWorld({ x: cx, y: cy });
+
+        // Use natural pixel size in world units (1 world unit ~= 1 px at scale 1)
+        let w = Math.max(1, img.naturalWidth || img.width || 1);
+        let h = Math.max(1, img.naturalHeight || img.height || 1);
+
+        // Scale down huge images to a sane max in view (optional)
+        try {
+          const vw = visibleWorldRect(camera, canvas);
+          const maxW = Math.max(64, (vw.maxx - vw.minx) * 0.6);
+          const maxH = Math.max(64, (vw.maxy - vw.miny) * 0.6);
+          const k = Math.min(1, Math.min(maxW / w, maxH / h));
+          w = Math.max(1, Math.floor(w * k));
+          h = Math.max(1, Math.floor(h * k));
+        } catch {}
+
+        const start = { x: world.x - w / 2, y: world.y - h / 2 };
+        const end   = { x: world.x + w / 2, y: world.y + h / 2 };
+
+        const s = addShape(state, {
+          shape: 'image',
+          brush: state.brush,
+          color: state.settings?.color || '#88ccff',
+          alpha: state.settings?.opacity ?? 1,
+          w: state.settings?.size ?? 6,
+          start,
+          end,
+          fill: false,
+          // custom fields for image shape
+          src: dataURL,
+          rotation: 0,
+          naturalW: img.naturalWidth || img.width || w,
+          naturalH: img.naturalHeight || img.height || h
+        });
+        // Store a transient image handle (not persisted)
+        try { s.img = img; } catch {}
+        // Select for quick transform if desired
+        try { selectForTransform(state, s); } catch {}
+        // Switch to Select tool so user can move/scale/rotate
+        try { setTool('select'); } catch {}
+      } catch {}
+    };
+    img.onerror = () => {};
+    try { img.decoding = 'async'; } catch {}
+    img.src = dataURL;
+  };
+  reader.readAsDataURL(file);
+}
+
+function installImageDragDrop() {
+  const host = document.getElementById('canvasContainer') || canvas;
+  if (!host) return;
+  const prevent = (e) => { e.preventDefault(); };
+  host.addEventListener('dragenter', prevent);
+  host.addEventListener('dragover', prevent);
+  host.addEventListener('drop', (e) => {
+    e.preventDefault();
+    const dt = e.dataTransfer;
+    if (!dt) return;
+    if (dt.files && dt.files.length) {
+      for (const f of dt.files) handleDroppedImage(f, e.clientX, e.clientY);
+      return;
+    }
+    // Fallback: URL string
+    const uri = dt.getData('text/uri-list') || dt.getData('text/plain');
+    if (uri && /^https?:\/\//i.test(uri)) {
+      // Try fetch, then convert to blob -> dataURL
+      (async () => {
+        try {
+          const res = await fetch(uri, { mode: 'cors' });
+          const blob = await res.blob();
+          const file = new File([blob], 'image', { type: blob.type || 'image/png' });
+          handleDroppedImage(file, e.clientX, e.clientY);
+        } catch {}
+      })();
+    }
+  });
+}
+
+installImageDragDrop();
 
 // --- Advanced settings ------------------------------------------------------
 function persistPerfProfile() {

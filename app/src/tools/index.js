@@ -3,7 +3,7 @@ import { DrawTool } from './draw.js';
 import { EraseTool } from './erase.js';
 import { PanTool } from './pan.js';
 import { DeleteTool } from './delete.js';
-import { LineTool, RectTool, EllipseTool } from './shapes.js';
+import { LineTool, RectTool, EllipseTool, ArrowTool } from './shapes.js';
 import { SelectTool } from './select.js';
 import { PaintTool } from './paint.js';
 import { TextTool } from './text.js';
@@ -21,6 +21,7 @@ export function createTool(name, deps){
     case 'delete': return new DeleteTool(deps);
     case 'pan': return new PanTool(deps);
     case 'line': return new LineTool(deps);
+    case 'arrow': return new ArrowTool(deps);
     case 'rect': return new RectTool(deps);
     case 'ellipse': return new EllipseTool(deps);
     default: return new DrawTool(deps);

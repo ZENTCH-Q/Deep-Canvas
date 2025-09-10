@@ -193,7 +193,7 @@ export function isHitConsideringBake(stroke, pWorld, rWorld, bake, camera){
 
   if (stroke.kind === 'path') return hitPath(stroke, p, r);
   if (stroke.kind === 'shape'){
-    if (stroke.shape === 'text'){
+    if (stroke.shape === 'text' || stroke.shape === 'image'){
       return hitRotatedRect(stroke.start, stroke.end, stroke.rotation || 0, p, r);
     }
     if (stroke.shape==='line')    return hitLine(stroke, p, r);
@@ -223,7 +223,7 @@ export function distancePxConsideringBake(stroke, pWorld, camera, bake){
     const t = (stroke.w||1)*0.5;
     dWorld = Math.max(0, dCenter - t);
   } else if (stroke.kind === 'shape'){
-    if (stroke.shape === 'text'){
+    if (stroke.shape === 'text' || stroke.shape === 'image'){
       const minx = Math.min(stroke.start.x, stroke.end.x);
       const maxx = Math.max(stroke.start.x, stroke.end.x);
       const miny = Math.min(stroke.start.y, stroke.end.y);

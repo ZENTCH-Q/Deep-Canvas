@@ -677,6 +677,57 @@ function drawShapeWorld(ctx, s, camera, dpr = 1) {
     drawTextBoxWorld(ctx, camera, s, dpr);
     return;
   }
+  if (s.shape === 'image') {
+    try {
+      const minx = Math.min(a.x, b.x), miny = Math.min(a.y, b.y);
+      const maxx = Math.max(a.x, b.x), maxy = Math.max(a.y, b.y);
+      const w = Math.max(1e-6, maxx - minx);
+      const h = Math.max(1e-6, maxy - miny);
+
+      // Image cache per-src
+      window.__dc_img_cache = window.__dc_img_cache || new Map();
+      const cache = window.__dc_img_cache;
+      let rec = null;
+      const key = s.src || s._src || null;
+      if (key) {
+        rec = cache.get(key);
+        if (!rec) {
+          const img = new Image();
+          try { img.decoding = 'async'; } catch {}
+          img.onload = () => { try { markDirty(); scheduleRender(); } catch {} };
+          img.onerror = () => { try { markDirty(); scheduleRender(); } catch {} };
+          img.src = key;
+          rec = { img };
+          cache.set(key, rec);
+        }
+      }
+      const img = (s.img && s.img.complete) ? s.img : (rec?.img || null);
+      if (!img || !img.complete) {
+        // Placeholder: faint rect until image loads
+        ctx.save();
+        ctx.globalAlpha = Math.min(0.35, ctx.globalAlpha);
+        ctx.fillStyle = '#8884';
+        ctx.strokeStyle = '#aaa8';
+        ctx.beginPath(); ctx.rect(minx, miny, w, h); ctx.fill(); ctx.stroke();
+        ctx.restore();
+        return;
+      }
+
+      const cx = (minx + maxx) * 0.5, cy = (miny + maxy) * 0.5;
+      ctx.save();
+      ctx.translate(cx, cy);
+      if (s.rotation) ctx.rotate(s.rotation);
+
+      const prevSmooth = ctx.imageSmoothingEnabled;
+      const prevQual = ctx.imageSmoothingQuality;
+      try { ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high'; } catch {}
+      ctx.drawImage(img, -w / 2, -h / 2, w, h);
+      ctx.imageSmoothingEnabled = prevSmooth;
+      try { ctx.imageSmoothingQuality = prevQual; } catch {}
+      ctx.restore();
+    } catch {}
+    return;
+  }
   if (s.shape === 'line') {
     ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke(); return;
   }
@@ -1207,7 +1258,7 @@ if (state.selection && state.selection.size) {
     }
 
     // Rotated text: draw rotated selection box + handles
-    if (only && only.shape === 'text' && Math.abs(only.rotation || 0) > 1e-6) {
+    if (only && (only.shape === 'text' || only.shape === 'image') && Math.abs(only.rotation || 0) > 1e-6) {
       drawSelectionHandlesRotatedText(ctx, only, camera, theme, dpr);
 
       // (Optional) keep size label (AABB-based)

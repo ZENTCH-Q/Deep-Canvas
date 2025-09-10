@@ -108,6 +108,13 @@ export function addShape(state, init){
     timestamp: performance.now(),
     _baked: !state._bake?.active
   };
+  // Carry image-specific fields when shape === 'image'
+  if (init.shape === 'image') {
+    if (typeof init.src === 'string') s.src = init.src;
+    if (Number.isFinite(init.naturalW)) s.naturalW = init.naturalW;
+    if (Number.isFinite(init.naturalH)) s.naturalH = init.naturalH;
+    s.rotation = Number.isFinite(init.rotation) ? init.rotation : 0;
+  }
   state.strokes.push(s);
   insert(grid, s); markDirty(); scheduleRender();
   return s;
