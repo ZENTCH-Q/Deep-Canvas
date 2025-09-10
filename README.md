@@ -82,6 +82,5 @@ cd Deep-Canvas
 npm install
 npm run dev
 ```
-=======
 ---
 I accept any new ideas That can make Deep Canvas Better and Will Try my best to Fulfill any idea that you given :)
