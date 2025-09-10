@@ -814,9 +814,15 @@ const ctxMenu = document.getElementById('ctxMenu');
 const ctxResetView = document.getElementById('ctxResetView');
 const ctxSavePNG = document.getElementById('ctxSavePNG');
 const ctxDeleteSel = document.getElementById('ctxDeleteSel');
+const ctxCreate = document.getElementById('ctxCreate');
+const ctxCreateMenu = document.getElementById('ctxCreateMenu');
+const ctxCreateImage = document.getElementById('ctxCreateImage');
 
+let _lastCtxClient = { x: 0, y: 0 };
 function showCtxMenu(x, y){
   if (!ctxMenu) return;
+  hideCreateSubmenu();
+  _lastCtxClient = { x, y };
   ctxMenu.style.display = 'block';
   ctxMenu.setAttribute('aria-hidden', 'false');
   const pad = 6;
@@ -838,6 +844,7 @@ function hideCtxMenu(){
   if (!ctxMenu) return;
   ctxMenu.style.display = 'none';
   ctxMenu.setAttribute('aria-hidden', 'true');
+  hideCreateSubmenu();
 }
 
 canvas.addEventListener('pointerdown', (e) => {
@@ -845,7 +852,7 @@ canvas.addEventListener('pointerdown', (e) => {
 });
 document.addEventListener('pointerdown', (e) => {
   if (!ctxMenu || ctxMenu.style.display === 'none') return;
-  const within = ctxMenu.contains(e.target);
+  const within = ctxMenu.contains(e.target) || (ctxCreateMenu?.contains?.(e.target) ?? false);
   const rightClick = (e.button === 2);
   if (!within && !rightClick) hideCtxMenu();
 });
@@ -886,6 +893,57 @@ ctxSavePNG?.addEventListener('click', async () => {
   a.href = url; a.download = 'endless.png'; a.click();
   URL.revokeObjectURL(url);
   hideCtxMenu();
+});
+
+// --- Create submenu ------------------------------------------------------------
+function showCreateSubmenu(){
+  if (!ctxCreate || !ctxCreateMenu) return;
+  // Position to the right of the Create item
+  const vw = document.documentElement.clientWidth;
+  const vh = document.documentElement.clientHeight;
+  const pad = 6;
+  const itemRect = ctxCreate.getBoundingClientRect();
+  // Ensure submenu is rendered to measure
+  ctxCreateMenu.style.display = 'block';
+  ctxCreateMenu.setAttribute('aria-hidden','false');
+  ctxCreate?.setAttribute('aria-expanded','true');
+  const w = ctxCreateMenu.offsetWidth || 200;
+  const h = ctxCreateMenu.offsetHeight || 40;
+  let left = Math.min(itemRect.right + pad, vw - w - pad);
+  let top  = Math.min(itemRect.top, vh - h - pad);
+  if (left < pad) left = pad;
+  if (top < pad) top = pad;
+  ctxCreateMenu.style.left = left + 'px';
+  ctxCreateMenu.style.top  = top  + 'px';
+}
+function hideCreateSubmenu(){
+  if (!ctxCreateMenu) return;
+  ctxCreateMenu.style.display = 'none';
+  ctxCreateMenu.setAttribute('aria-hidden','true');
+  ctxCreate?.setAttribute('aria-expanded','false');
+}
+
+ctxCreate?.addEventListener('mouseenter', showCreateSubmenu);
+ctxCreate?.addEventListener('click', (e) => { e.stopPropagation(); showCreateSubmenu(); });
+window.addEventListener('resize', hideCreateSubmenu);
+window.addEventListener('scroll', hideCreateSubmenu, true);
+
+ctxCreateImage?.addEventListener('click', () => {
+  // Use the existing drop handler logic by creating a transient file input
+  const input = document.createElement('input');
+  input.type = 'file'; input.accept = 'image/*';
+  input.style.display = 'none';
+  document.body.appendChild(input);
+  input.addEventListener('change', () => {
+    try {
+      const file = input.files && input.files[0];
+      if (file) handleDroppedImage(file, _lastCtxClient.x, _lastCtxClient.y);
+    } finally {
+      document.body.removeChild(input);
+      hideCtxMenu();
+    }
+  }, { once: true });
+  input.click();
 });
 
 // --- Drag & Drop Images -----------------------------------------------------
