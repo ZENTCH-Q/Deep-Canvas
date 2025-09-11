@@ -84,5 +84,25 @@ cd Deep-Canvas
 npm install
 npm run dev
 ```
+
+## Plugin SDK
+
+Create custom widgets by dropping JavaScript files into `app/plugins`.
+Each plugin exports a `register(api)` function. Use `api.registerWidget`
+to add buttons to the canvas dock.
+
+```js
+// app/plugins/hello-plugin.js
+export function register(api) {
+  api.registerWidget({
+    id: 'helloPlugin',
+    label: 'Hello',
+    html: '👋',
+    onClick: () => alert('Hello from plugin!')
+  });
+}
+```
+
+Restart the app to load new plugins.
 ---
 I accept any new ideas That can make Deep Canvas Better and Will Try my best to Fulfill any idea that you given :)
