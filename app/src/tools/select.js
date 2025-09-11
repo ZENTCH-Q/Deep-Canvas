@@ -91,14 +91,29 @@ export function hitHandle(worldPt, bbox, camera){
   }
   return null;
 }
- export function hitSelectionUI(worldPt, state, camera){
-   const bb = selectionBBoxWorld(state);
-   if (!bb) return null;
-   const h = hitHandle(worldPt, bb, camera);
-   if (h) return { type: 'handle', handle: h };
-   if (pointInRect(worldPt, bb)) return { type: 'inside' };
-   return null;
- }
+export function hitSelectionUI(worldPt, state, camera){
+  const bb = selectionBBoxWorld(state);
+  if (!bb) return null;
+  const h = hitHandle(worldPt, bb, camera);
+  if (h) return { type: 'handle', handle: h };
+  // Move handle (axis-aligned) like text's handle, for shapes
+  try {
+    if (state?.selection && state.selection.size === 1) {
+      const only = Array.from(state.selection)[0];
+      if (only && only.kind === 'shape') {
+        const r = handleWorldRadius(camera);
+        const rotOffsetWorld = 28 / Math.max(1e-8, camera.scale);
+        const diag = rotOffsetWorld / Math.SQRT2;
+        const mvx = bb.maxx + diag;
+        const mvy = bb.miny - diag;
+        const dxm = worldPt.x - mvx, dym = worldPt.y - mvy;
+        if ((dxm*dxm + dym*dym) <= (r*r)) return { type: 'move' };
+      }
+    }
+  } catch {}
+  if (pointInRect(worldPt, bb)) return { type: 'inside' };
+  return null;
+}
 function scaleFromHandle(handle, bb, cursor, shiftUniform, altCenter){
   const cx = (bb.minx + bb.maxx) / 2, cy = (bb.miny + bb.maxy) / 2;
   let ox = cx, oy = cy;
@@ -239,12 +254,15 @@ export class SelectTool {
     if (this.state.selection && this.state.selection.size){
       const bb = selectionBBoxWorld(this.state);
       if (bb){
-        const h = hitHandle(this.downWorld, bb, this.camera);
+        const uiHit = hitSelectionUI(this.downWorld, this.state, this.camera);
+        const h = (uiHit?.type === 'handle') ? uiHit.handle : (uiHit?.type === 'move' ? 'move' : null);
         if (h === 'rot'){
           this.mode = 'rotate'; this.handle = 'rot'; this.startBBox = bb;
           const cx = (bb.minx + bb.maxx)/2, cy = (bb.miny + bb.maxy)/2;
           this._rotPivot = { x:cx, y:cy };
           this._rotAngle0 = Math.atan2(this.downWorld.y - cy, this.downWorld.x - cx);
+        } else if (h === 'move'){
+          this.mode = 'move'; this.handle = 'move'; this.startBBox = bb;
         } else if (h){
           this.mode = 'scale'; this.handle = h; this.startBBox = bb;
         } else if (pointInRect(this.downWorld, bb)) {
@@ -289,10 +307,11 @@ export class SelectTool {
       const bb = selectionBBoxWorld(this.state);
       if (bb){
         const world = this.camera.screenToWorld(scr);
-        const h = hitHandle(world, bb, this.camera) || (pointInRect(world, bb) ? 'move' : null);
+        const uiHit = hitSelectionUI(world, this.state, this.camera);
+        const h = (uiHit?.type === 'handle') ? uiHit.handle : (uiHit?.type === 'move' ? 'move' : (pointInRect(world, bb) ? 'move' : null));
         const cursor = h ? (h === 'move' ? 'move' : cursorForHandle(h)) : '';
         this.canvas.style.cursor = cursor;
-        const as = (h === 'move') ? null : h; 
+        const as = h; 
         if (this.state._hoverHandle !== as){
           this.state._hoverHandle = as;
           scheduleRender();

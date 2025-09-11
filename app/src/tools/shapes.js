@@ -1,5 +1,5 @@
 // src/tools/shapes.js
-import { addShape, updateShapeEnd, removeStroke } from '../strokes.js';
+import { addShape, updateShapeEnd, removeStroke, selectForTransform } from '../strokes.js';
 import { scheduleRender, setDeferIndex } from '../state.js';
 
 const MIN_DRAG_PX = 3;
@@ -26,6 +26,7 @@ class BaseShapeTool {
     this._downScreen = null;
     this._downWorld = null;
     this._drafting = false;
+    this._prevHadSelection = false;
   }
 
   _newShape(shape, worldPt) {
@@ -48,6 +49,13 @@ class BaseShapeTool {
     const screen = { x: e.clientX - r.left, y: e.clientY - r.top };
     const world  = this.camera.screenToWorld(screen);
     this._downScreen = screen; this._downWorld = world;
+    // Remember prior selection state (used to treat simple click as deselect)
+    this._prevHadSelection = !!(this.state?.selection && this.state.selection.size > 0);
+
+    // When starting to draft a new shape, hide any existing selection UI immediately
+    try { this.state.selection?.clear?.(); } catch {}
+    try { this.state._transformActive = false; } catch {}
+    try { this.state._hoverHandle = null; this.state._activeHandle = null; } catch {}
     setDeferIndex(true);
     this._active = this._newShape(shape, world);
     try { this.canvas.setPointerCapture(e.pointerId); } catch {}
@@ -91,12 +99,19 @@ class BaseShapeTool {
       const upScreen = { x: e.clientX - r.left, y: e.clientY - r.top };
       const dx = Math.abs(upScreen.x - this._downScreen.x);
       const dy = Math.abs(upScreen.y - this._downScreen.y);
-      // If it was just a click, keep a minimal size for visibility
+      // If it was just a click, draw nothing (discard the transient shape)
       if (dx < MIN_DRAG_PX && dy < MIN_DRAG_PX) {
-        const wMin = 12 / Math.max(1e-8, this.camera.scale);
-        this._active.end = { x: this._active.start.x + wMin, y: this._active.start.y + wMin };
+        try { removeStroke(this.state, this._active); } catch {}
+        setDeferIndex(false);
+        try { this.canvas.releasePointerCapture(e.pointerId); } catch {}
+        this._drafting = false;
+        this._downWorld = null; this._downScreen = null; this._active = null;
+        scheduleRender();
+        return;
       }
+      // Commit to history and select the newly created shape
       this.state.history?.pushAdd?.(this._active);
+      try { selectForTransform(this.state, this._active); } catch {}
       setDeferIndex(false);
       try { this.canvas.releasePointerCapture(e.pointerId); } catch {}
       this._drafting = false;

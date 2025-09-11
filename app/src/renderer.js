@@ -813,6 +813,27 @@ function drawSelectionHandlesRotatedText(ctx, s, camera, theme, dpr) {
     ctx.restore();
   } catch {}
 
+  // move handle at 45° from top-right corner for non-text shapes
+  if (s && s.kind === 'shape' && s.shape !== 'text') {
+    try {
+      ctx.beginPath();
+      const diag = (ROT_OFFSET_PX * px) / Math.SQRT2;
+      const mvx = rx + diag;
+      const mvy = ly - diag;
+      const isHover = s && s._hoverHandle === 'move';
+      const prevFill = ctx.fillStyle, prevStroke = ctx.strokeStyle, prevLW = ctx.lineWidth;
+      if (isHover) {
+        ctx.fillStyle = theme.handleHoverFill || '#3a7afe';
+        ctx.strokeStyle = theme.handleHoverStroke || '#dce6ff';
+        ctx.lineWidth = Math.max(px*1.25, 1.5*px);
+      }
+      ctx.arc(mvx, mvy, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      if (isHover) { ctx.fillStyle = prevFill; ctx.strokeStyle = prevStroke; ctx.lineWidth = prevLW; }
+    } catch {}
+  }
+
   // move handle at 45� from top-right corner (text only)
   if (s && s.shape === 'text') {
     try {
@@ -1526,7 +1547,9 @@ if (state.selection && state.selection.size) {
       const w = bb.maxx - bb.minx, h = bb.maxy - bb.miny;
       ctx.beginPath(); ctx.rect(x, y, w, h); ctx.fill(); ctx.stroke();
       ctx.restore();
-      drawSelectionHandles(ctx, bb, camera, theme, dpr, (only && only._hoverHandle) || state._hoverHandle || null, (only && only.shape === 'text'));
+      const hover = (only && only._hoverHandle) || state._hoverHandle || null;
+      const showMove = !!only && only.kind === 'shape';
+      drawSelectionHandles(ctx, bb, camera, theme, dpr, hover, showMove);
 
       // Label (same as before)
       const wPx = Math.max(0, Math.round(w * camera.scale));

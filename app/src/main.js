@@ -7,6 +7,10 @@ import { initUI, getRecentColors, setRecentColors, clearRecentColors } from './u
 import { grid, applyWorkerIndex, rebuildIndex, clearIndex } from './spatial_index.js';
 import { saveViewportPNG, saveViewportThumb } from './export.js';
 import { removeStroke, addShape, selectForTransform } from './strokes.js';
+import { selectionBBoxWorld, hitHandle, hitSelectionUI } from './tools/select.js';
+import { pointInRect } from './utils/common.js';
+import { pickRadius } from './utils/pick.js';
+import { pickTopAt } from './utils/picker.js';
 import { paintAtPoint } from './tools/paint.js';
 import { PanTool } from './tools/pan.js';
 import { attachHistory } from './history.js';
@@ -374,9 +378,49 @@ function kickExactIdle(){
 canvas.addEventListener('pointerdown',  e => {
   normalizePointerEvent(e);
   if (e.pointerType !== 'mouse') e.preventDefault(); // block browser touch behavior just in case
+
+  // If a non-select tool is active and the user clicks empty space while something
+  // is selected, clear the selection box — but DO NOT clear if the click is on
+  // selection UI (handles/move/inside box).
+  try {
+    if (state.tool !== 'select' && state.selection?.size) {
+      const world = { x: e.worldX, y: e.worldY };
+      const bb = selectionBBoxWorld(state);
+      if (bb) {
+        const ui = hitSelectionUI(world, state, camera);
+        if (!ui) {
+          const rWorld = pickRadius(camera, state, 12);
+          const hit = pickTopAt(world, rWorld, { camera, state });
+          if (!hit) {
+            try { state.selection.clear(); } catch {}
+            state._marquee = null;
+            state._transformActive = false;
+            state._hoverHandle = null;
+            state._activeHandle = null;
+            scheduleRender();
+          }
+        }
+      }
+    }
+  } catch {}
+
   try { canvas.setPointerCapture(e.pointerId); } catch {}
   if (shouldSendToPanOverride(e)) panOverrideTool.onPointerDown?.(e);
-  currentTool.onPointerDown?.(e);
+
+  // Route transform interactions to the Select tool even if another tool is active
+  const selTool = state._selectToolSingleton;
+  let routedToSelect = false;
+  try {
+    if (state.tool !== 'select' && state.selection?.size) {
+      const hit = hitSelectionUI({ x: e.worldX, y: e.worldY }, state, camera);
+      if (hit && (hit.type === 'handle' || hit.type === 'move' || hit.type === 'inside')) {
+        selTool?.onPointerDown?.(e);
+        routedToSelect = true;
+      }
+    }
+  } catch {}
+
+  if (!routedToSelect) currentTool.onPointerDown?.(e);
   kickExactIdle();
 });
 
@@ -384,7 +428,16 @@ canvas.addEventListener('pointermove',  e => {
   normalizePointerEvent(e);
   if (e.pointerType !== 'mouse') e.preventDefault();
   if (shouldSendToPanOverride(e)) panOverrideTool.onPointerMove?.(e);
-  currentTool.onPointerMove?.(e);
+
+  // Always allow Select tool to manage hover/cursor over selection UI
+  try { state._selectToolSingleton?.onPointerMove?.(e); } catch {}
+
+  // If in an active transform, keep routing moves to Select tool
+  if (state._transformActive) {
+    // Already invoked above; nothing else to do for current tool while transforming
+  } else {
+    currentTool.onPointerMove?.(e);
+  }
   kickExactIdle();
 });
 
@@ -392,7 +445,13 @@ canvas.addEventListener('pointerup',    e => {
   normalizePointerEvent(e);
   if (e.pointerType !== 'mouse') e.preventDefault();
   if (shouldSendToPanOverride(e)) panOverrideTool.onPointerUp?.(e);
-  currentTool.onPointerUp?.(e);
+
+  // If a transform is active, finish it via Select tool
+  if (state._transformActive) {
+    try { state._selectToolSingleton?.onPointerUp?.(e); } catch {}
+  } else {
+    currentTool.onPointerUp?.(e);
+  }
   try { canvas.releasePointerCapture(e.pointerId); } catch {}
   kickExactIdle();
 });
