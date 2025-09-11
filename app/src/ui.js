@@ -230,15 +230,9 @@ function initColorUI(state){
     colorBtn.addEventListener('dragstart', (e)=>{ e.stopPropagation(); startColorDrag(e, state.settings?.color || current); });
   }
   // Enable drag from the color panel body (except interactive inputs)
-  if (colorPanel){
-    try { colorPanel.setAttribute('draggable','true'); } catch {}
-    colorPanel.addEventListener('dragstart', (e)=>{
-      const t = e.target;
-      // Avoid hijacking range inputs or buttons
-      if (t && (t.tagName === 'INPUT' || t.tagName === 'BUTTON' || t.closest('input') || t.closest('button'))) return;
-      startColorDrag(e, state.settings?.color || current);
-    });
-  }
+  // Disable drag-to-paint from the entire color panel to avoid conflicts
+  // with sliders and scrollbars. Drag remains enabled for swatches and the dock chip.
+  // if (colorPanel){ /* intentionally not draggable */ }
   // Clear payload when drag ends anywhere
   window.addEventListener('dragend', ()=>{ try{ window._dragPaint=null; }catch{} });
 
