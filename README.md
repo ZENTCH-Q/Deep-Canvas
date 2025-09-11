@@ -18,7 +18,7 @@ Extreme Zoom:
 
 - Fast renderer — spatial index + smart simplification
 - Infinite pan & zoom — zoom around cursor, smooth panning
-- Brushes — pen, marker, glow, dashed; eraser
+- Brush — pen; eraser
 - Shapes — line, rectangle, ellipse; optional fill
 - Selection HUD — resize/rotate handles, live style/animation layers
 - Gallery — create “+”, rename (double‑click title), delete, thumbnail from last view
@@ -43,10 +43,11 @@ If SmartScreen warns, click More info → Run anyway (unsigned builds).
 
 ## Quick start & hotkeys
 
-- Tools: Draw, Paint (bucket), Erase, Delete, Pan, Line/Rect/Ellipse, Select
+- Tools: Draw, Erase, Delete, Pan, Line/Rect/Ellipse, Select
 - Pan: hold Space, drag
 - Zoom: mouse wheel / trackpad (zooms around cursor)
 - Undo / Redo: Ctrl/Cmd+Z, Ctrl+Y or Shift+Cmd+Z
+- Fill: drag a color swatch (or the color chip) onto the canvas to fill shapes/background with a radial reveal
 - Right‑click on canvas: Reset View, Save PNG, Advanced…
 - Gallery:
   - Click + to create
@@ -54,10 +55,11 @@ If SmartScreen warns, click More info → Run anyway (unsigned builds).
   - Double‑click title to rename
   - … menu → Delete
 =======
-- **Tools:** Draw, Paint (bucket), Erase, Delete, Pan, Line/Rect/Ellipse, Select
+- **Tools:** Draw, Erase, Delete, Pan, Line/Rect/Ellipse, Select
 - **Pan:** hold **Space**, drag
 - **Zoom:** mouse wheel / trackpad (zooms around cursor)
 - **Undo / Redo:** `Ctrl/win + Z`, `Ctrl+Y` or `Shift+win + Z`
+- **Fill:** drag a color swatch (or the color chip) onto the canvas to fill shapes/background with a radial reveal
 - **Right-click** on canvas: context menu (Reset View, Save PNG, Delete Selected)
 - **Space-Bar** to stop any animation that was playing
 - **Gallery:**

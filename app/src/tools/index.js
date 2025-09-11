@@ -5,7 +5,6 @@ import { PanTool } from './pan.js';
 import { DeleteTool } from './delete.js';
 import { LineTool, RectTool, EllipseTool, ArrowTool } from './shapes.js';
 import { SelectTool } from './select.js';
-import { PaintTool } from './paint.js';
 import { TextTool } from './text.js';
 
 export function createTool(name, deps){
@@ -14,7 +13,6 @@ export function createTool(name, deps){
   }
   switch(name){
     case 'select': return deps.state._selectToolSingleton;
-    case 'paint': return new PaintTool(deps);
     case 'draw': return new DrawTool(deps);
     case 'text'  : return new TextTool(deps);
     case 'erase': return new EraseTool(deps);

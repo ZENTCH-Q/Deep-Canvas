@@ -74,6 +74,7 @@ function buildSwatches(host, currentGetter, onPick){
       const h = toHex6(hex); if (!h) return;
       const b = document.createElement('button');
       b.type='button'; b.className='sw'; b.style.setProperty('background-color', h, 'important');
+      try { b.setAttribute('draggable','true'); } catch {}
       b.dataset.hex=h; if (allowReplace) b.dataset.idx=String(idx);
       b.setAttribute('aria-label',`Use color ${h}`);
       b.addEventListener('click',(ev)=>{ if (allowReplace && ev.altKey){ replaceRecentAt(idx, currentGetter()); return; } onPick(h); });
@@ -120,6 +121,8 @@ function initColorUI(state){
   const input  = document.getElementById('color');
   const eyeBtn = document.getElementById('eyedropBtn');
   const swHost = document.getElementById('swatchHost');
+  const colorBtn = document.getElementById('colorBtn');
+  const colorPanel = document.getElementById('colorPanel');
 
   const setChip = (hex)=>{
     document.documentElement.style.setProperty('--ui-color', hex);
@@ -131,6 +134,106 @@ function initColorUI(state){
   setChip(current);
 
   const swAPI = buildSwatches(swHost, ()=>current, (hex)=>setColor(hex));
+
+  // Floating color ball (fallback if OS drag image is not visible)
+  let _dragBallEl = null, _dragBallRAF = null, _dragBallTarget = null;
+  function showDragBall(color){
+    try{
+      if (_dragBallEl) return;
+      const el=document.createElement('div');
+      _dragBallEl=el; el.id='dragBall';
+      const sz=28; const r=sz/2;
+      el.style.cssText=[
+        'position:fixed','left:0','top:0',
+        `width:${sz}px`,`height:${sz}px`,'border-radius:50%','pointer-events:none','z-index:999999',
+        `background:${color}`,'box-shadow:0 6px 16px rgba(0,0,0,.35), inset 0 -3px 6px rgba(0,0,0,.15)',
+        'will-change: transform','transform: translate3d(-9999px,-9999px,0)'
+      ].join(';');
+      document.body.appendChild(el);
+    }catch{}
+  }
+  function _tickDragBall(){
+    _dragBallRAF = null;
+    if (!_dragBallEl || !_dragBallTarget) return;
+    try{
+      const { x, y } = _dragBallTarget; const r = 14;
+      _dragBallEl.style.transform = `translate3d(${(x-r)|0}px, ${(y-r)|0}px, 0)`;
+    }catch{}
+  }
+  function moveDragBall(x,y){
+    if(!_dragBallEl) return;
+    _dragBallTarget = { x, y };
+    if (!_dragBallRAF) _dragBallRAF = requestAnimationFrame(_tickDragBall);
+  }
+  function hideDragBall(){ if(!_dragBallEl) return; try{ _dragBallEl.remove(); }catch{} _dragBallEl=null; _dragBallTarget=null; if (_dragBallRAF){ cancelAnimationFrame(_dragBallRAF); _dragBallRAF=null; } }
+
+  const onAnyDragMove = (ev)=>{ try{ if (window._dragPaint && _dragBallEl){ const x = ev.clientX ?? 0, y = ev.clientY ?? 0; moveDragBall(x, y); } }catch{} };
+  window.addEventListener('dragover', onAnyDragMove, { passive:true, capture:true });
+  window.addEventListener('drag', onAnyDragMove, { passive:true, capture:true });
+  document.addEventListener('drag', onAnyDragMove, { passive:true, capture:true });
+  document.addEventListener('drop', ()=>{ hideDragBall(); }, { capture:true });
+  window.addEventListener('dragend', ()=>{ hideDragBall(); }, { passive:true });
+  window.addEventListener('keydown', (e)=>{ if (e.key==='Escape'){ hideDragBall(); } }, { passive:true });
+
+  // --- Drag-to-paint wiring: start a color drag from swatches or chip ---
+  function startColorDrag(e, hex){
+    try{
+      const dt = e.dataTransfer; if (!dt) return;
+      try { dt.effectAllowed = 'copy'; } catch {}
+      const color = toHex6(hex) || toHex6(state.settings?.color) || '#88ccff';
+      const size  = Math.max(1, Math.round(state.settings?.size ?? 6));
+      const alpha = Math.max(0.05, Math.min(1, state.settings?.opacity ?? 1));
+      try { dt.setData('text/plain', color); } catch {}
+      try { dt.setData('application/x-color', color); } catch {}
+      // Drag image: circular color ball with subtle shadow
+      try {
+        const D=40; const cn = document.createElement('canvas'); cn.width=D; cn.height=D;
+        const c2 = cn.getContext('2d');
+        c2.clearRect(0,0,D,D);
+        c2.save();
+        c2.beginPath(); c2.arc(D/2,D/2,(D-4)/2,0,Math.PI*2); c2.closePath();
+        const grad=c2.createRadialGradient(D*0.38,D*0.34,D*0.1, D/2,D/2,(D-4)/2);
+        grad.addColorStop(0, color);
+        grad.addColorStop(1, color);
+        c2.fillStyle=grad; c2.fill();
+        c2.lineWidth=1; c2.strokeStyle='rgba(0,0,0,.45)'; c2.stroke();
+        c2.restore();
+        // small highlight
+        c2.beginPath(); c2.arc(D*0.38,D*0.34,D*0.1,0,Math.PI*2); c2.fillStyle='rgba(255,255,255,.18)'; c2.fill();
+        dt.setDragImage(cn, D/2, D/2);
+      } catch {}
+      // Fallback overlay ball (if OS drag image is not shown)
+      showDragBall(color);
+      window._dragPaint = { color, size, opacity: alpha };
+      // Hide color panel on next frame to avoid canceling drag image
+      requestAnimationFrame(()=>{ try { const cp = document.getElementById('colorPanel'); if (cp){ cp.classList.remove('open'); cp.style.display='none'; } } catch {} });
+    }catch{}
+  }
+
+  // Enable drag on swatches
+  swHost?.addEventListener('dragstart', (e)=>{
+    const t = e.target;
+    if (t && t.classList && t.classList.contains('sw')){
+      e.stopPropagation(); startColorDrag(e, t.dataset.hex || current);
+    }
+  });
+  // Enable drag on the color chip button
+  if (colorBtn){
+    try { colorBtn.setAttribute('draggable','true'); } catch {}
+    colorBtn.addEventListener('dragstart', (e)=>{ e.stopPropagation(); startColorDrag(e, state.settings?.color || current); });
+  }
+  // Enable drag from the color panel body (except interactive inputs)
+  if (colorPanel){
+    try { colorPanel.setAttribute('draggable','true'); } catch {}
+    colorPanel.addEventListener('dragstart', (e)=>{
+      const t = e.target;
+      // Avoid hijacking range inputs or buttons
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'BUTTON' || t.closest('input') || t.closest('button'))) return;
+      startColorDrag(e, state.settings?.color || current);
+    });
+  }
+  // Clear payload when drag ends anywhere
+  window.addEventListener('dragend', ()=>{ try{ window._dragPaint=null; }catch{} });
 
   function setColor(hex, { push=true }={}){
     const h=toHex6(hex); if (!h) return;
@@ -180,31 +283,53 @@ function initColorPanelHover(){
   window.addEventListener('resize', ()=>{ if (colorPanel.classList.contains('open')) place(); });
 }
 
-const SIZE_STEPS=[4,8,12,20,32];
-function buildSizeRow(state){
-  const row=document.getElementById('sizeRow'); if(!row) return;
-  row.innerHTML='';
-  const cur=Math.round(state.settings?.size??6);
+// Moved size/opacity controls into the color panel as sliders
+function initSizeOpacitySliders(state){
+  try {
+    const sizeEl = document.getElementById('sizeSlider');
+    const sizeVal = document.getElementById('sizeValue');
+    const opEl = document.getElementById('opacityRange');
+    const opVal = document.getElementById('opacityValue');
 
-  SIZE_STEPS.forEach(sz=>{
-    const b=document.createElement('button'); b.type='button'; b.className='size-chip'; b.setAttribute('aria-label',`Size ${sz}px`);
-    const d=document.createElement('span'); d.className='dot'; d.style.setProperty('--d', `${Math.max(6,Math.min(22,Math.round(sz*0.6)))}px`);
-    b.appendChild(d); if (cur===sz) b.classList.add('current');
+    const syncSize = () => {
+      const s = Math.max(1, Math.round(state.settings?.size ?? 6));
+      if (sizeEl && +sizeEl.value !== s) sizeEl.value = String(s);
+      if (sizeVal) sizeVal.textContent = `${s} px`;
+    };
+    const syncOpacity = () => {
+      const pct = clampPct(Math.round((state.settings?.opacity ?? 1) * 100));
+      if (opEl && +opEl.value !== pct) opEl.value = String(pct);
+      if (opVal) opVal.textContent = `${pct}%`;
+    };
 
-    b.addEventListener('click', (e)=>{
-      e.stopPropagation(); state.settings.size=sz;
-      row.querySelectorAll('.size-chip').forEach(el=>el.classList.remove('current')); b.classList.add('current');
-      openOpacityPopover(state, b); markDirty(); scheduleRender();
-    });
-    b.addEventListener('wheel',(e)=>{
-      e.preventDefault(); openOpacityPopover(state, b);
-      const step=(e.deltaY>0?-2:2);
-      setOpacityPct(state, clampPct(Math.round((state.settings.opacity??1)*100)+step));
-      renderOpacityUI(state);
-    }, { passive:false });
+    if (sizeEl) {
+      sizeEl.min = '1'; sizeEl.max = '64'; sizeEl.step = '1';
+      sizeEl.addEventListener('input', () => {
+        const v = Math.max(1, Math.min(256, (+sizeEl.value || 6) | 0));
+        state.settings.size = v;
+        if (sizeVal) sizeVal.textContent = `${v} px`;
+        markDirty(); scheduleRender();
+      });
+    }
+    if (opEl) {
+      opEl.min = '5'; opEl.max = '100'; opEl.step = '1';
+      const apply = () => {
+        const pct = clampPct((+opEl.value || 100) | 0);
+        setOpacityPct(state, pct);
+        if (opVal) opVal.textContent = `${pct}%`;
+        markDirty(); scheduleRender();
+      };
+      opEl.addEventListener('input', apply);
+      opEl.addEventListener('change', apply);
+    }
 
-    row.appendChild(b);
-  });
+    // initial sync
+    syncSize();
+    syncOpacity();
+
+    // keep in sync if changed elsewhere
+    setInterval(() => { try { syncSize(); syncOpacity(); } catch {} }, 800);
+  } catch {}
 }
 function clampPct(p){ return Math.max(5, Math.min(100, p|0)); }
 let _opacityAnchor=null;
@@ -436,19 +561,10 @@ function mountGalleryPlusCard(state) {
 export function initUI({ state, canvas, camera, setTool }){
   document.querySelectorAll('[data-tool]').forEach(b=> b.addEventListener('click', ()=> setTool(b.dataset.tool)));
 
-  const qBrush=document.getElementById('quickBrush');
-  if (qBrush){ qBrush.value=state.brush||'pen'; qBrush.addEventListener('change', ()=>{ state.brush=qBrush.value; scheduleRender(); markDirty(); }); }
+  // quickBrush removed; single brush is always pen
 
-  buildSizeRow(state);
-  initOpacityPopover(state);
-  setInterval(()=>{
-    const s=Math.round(state.settings?.size??6);
-    document.querySelectorAll('#sizeRow .size-chip').forEach(el=>{
-      const val=parseInt(el.getAttribute('aria-label')?.replace(/\D+/g,'')||'0',10);
-      el.classList.toggle('current', val===s);
-    });
-    renderOpacityUI(state);
-  }, 600);
+  // Sliders for size + opacity live in color panel now
+  initSizeOpacitySliders(state);
 
   document.getElementById('undo')?.addEventListener('click', ()=> state.history?.undo());
   document.getElementById('redo')?.addEventListener('click', ()=> state.history?.redo());

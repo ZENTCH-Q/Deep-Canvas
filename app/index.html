@@ -144,8 +144,7 @@
     transform: translateX(-50%) translateY(0);
   }
 
-  /* (optional) make the droplet match the accent when active */
-  .dock [data-tool="paint"].active svg .drop { fill: currentColor; }
+  /* droplet styling removed: paint tool no longer present */
 
   .tool:hover{background:var(--panel-2)} .tool.active{outline:2px solid var(--accent);outline-offset:2px}
 
@@ -200,6 +199,9 @@
   .sw{width:22px;height:22px;border-radius:6px;border:1px solid var(--border);cursor:pointer;position:relative}
   .sw:focus{outline:2px solid var(--accent);outline-offset:2px}
   .sw.current::after{content:"";position:absolute;inset:6px;border-radius:4px;border:2px solid rgba(0,0,0,.35)}
+
+  /* Make size/opacity sliders inside the color panel longer */
+  #colorPanel input[type="range"]{ flex:1; min-width:220px }
 
   .opacity-pop{
     position:fixed;display:none;z-index:21;left:-9999px;top:-9999px;  
@@ -484,33 +486,28 @@
     <div class="prop-row" style="justify-content:flex-start" data-prop="color-swatches">
       <div class="swatch-host" id="swatchHost"></div>
     </div>
+    <!-- Moved brush Size and Opacity controls into the color panel -->
+    <div class="prop-row" data-prop="size">
+      <div class="label">Size</div>
+      <input id="sizeSlider" type="range" min="1" max="64" step="1" value="6" />
+      <span id="sizeValue" class="mini" aria-live="polite">6 px</span>
+    </div>
+    <div class="prop-row" data-prop="opacity">
+      <div class="label">Opacity</div>
+      <input id="opacityRange" type="range" min="5" max="100" step="1" value="100" />
+      <span id="opacityValue" class="mini" aria-live="polite">100%</span>
+    </div>
   </div>
 </div>
 
-<div id="opacityPopover" class="opacity-pop" aria-hidden="true">
-  <div id="opacitySlider" class="alpha-slider" role="slider"
-       aria-valuemin="5" aria-valuemax="100" aria-valuenow="100" tabindex="0">
-    <div class="alpha-rail"></div>
-    <div class="alpha-fill"></div>
-    <div class="alpha-ticks"></div>
-    <div class="alpha-thumb"></div>
-  </div>
-</div>
-<div id="opacityBadge" class="opacity-badge" aria-hidden="true">100%</div>
 
-<div class="dock" id="dock" aria-label="Tools">
-  <div class="dock-group global">
-    <button id="colorBtn" class="tool tool-chip" aria-label="Color">
-      <span class="chip" aria-hidden="true"><span class="dot"></span></span>
-    </button>
-    <label>
-      <select id="quickBrush" aria-label="Brush">
-        <option value="pen">Pen</option><option value="dashed">Dashed</option>
-        <option value="marker">Marker</option><option value="glow">Glow</option>
-      </select>
-    </label>
-    <div id="sizeRow" class="chip-row sizes" aria-label="Brush sizes"></div>
-  </div>
+  <div class="dock" id="dock" aria-label="Tools">
+    <div class="dock-group global">
+      <button id="colorBtn" class="tool tool-chip" aria-label="Color">
+        <span class="chip" aria-hidden="true"><span class="dot"></span></span>
+      </button>
+    
+    </div>
 
   <div class="sep" role="separator"></div>
 
@@ -531,13 +528,6 @@
       </svg>
     </button>
     
-    <button data-tool="paint" class="tool" aria-label="Fill">
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M4 13l8-8 6 6-8 8-6-6z"/>
-        <path d="M8.5 11.5c1.6-2 5.4-2 7 0"/>
-        <path class="drop" d="M21 16c0 1.8-1.5 3-1.5 3S18 17.8 18 16a1.5 1.5 0 1 1 3 0z" fill="currentColor" stroke="none"/>
-      </svg>
-    </button>
     <button data-tool="erase" class="tool" aria-label="Erase">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="m19 5-7 7-5-5 7-7z" transform="translate(-2,6)"/><path d="M7 21h10"/></svg>
     </button>
@@ -588,7 +578,7 @@
 </div>
 
 
-  <div id="ctxMenu" role="menu" aria-hidden="true">
+  <div id="ctxMenu" role="menu" aria-hidden="true" data-dc-ui="true">
   <div id="ctxResetView" class="item" role="menuitem">↺ Reset View</div>
   <div id="ctxDeleteSel" class="item" role="menuitem">Delete Selected</div>
   <div class="sep"></div>
@@ -598,7 +588,7 @@
   </div>
 
   <!-- Create submenu (positioned next to main context menu) -->
-  <div id="ctxCreateMenu" role="menu" aria-hidden="true">
+  <div id="ctxCreateMenu" role="menu" aria-hidden="true" data-dc-ui="true">
     <div id="ctxCreateImage" class="item" role="menuitem">＋ Create Image…</div>
   </div>
 

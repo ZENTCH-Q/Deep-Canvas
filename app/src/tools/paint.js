@@ -193,86 +193,63 @@ function pickNearestTopmost(strokes, p) {
   return best;
 }
 
-export class PaintTool {
-  constructor({ canvas, camera, state }) {
-    this.canvas = canvas;
-    this.camera = camera;
-    this.state = state;
-    this._down = false;
-  }
+export function paintAtPoint({ canvas, camera, state }, e){
+  const rect = canvas.getBoundingClientRect();
+  const sp = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+  const p  = camera.screenToWorld(sp);
 
-  cancel(){ this._down = false; }
-  onPointerMove = _ => {};
-  onPointerUp   = _ => { this._down = false; };
+  const tol = worldTol(camera);
+  const strokesArr = state.strokes;
 
-  onPointerDown = (e) => {
-    if (e.button !== 0) return;
-    this._down = true;
-    this._paintAt(e);
-  };
+  let hit = null;
+  let action = null; 
+  for (let i = strokesArr.length - 1; i >= 0; i--) {
+    const s = strokesArr[i];
+    if (!s || !s.bbox) continue;
+    const pad = Math.max(tol, s.w || 1);
+    if (p.x < s.bbox.minx - pad || p.x > s.bbox.maxx + pad || p.y < s.bbox.miny - pad || p.y > s.bbox.maxy + pad) continue;
 
-  _paintAt(e){
-    const rect = this.canvas.getBoundingClientRect();
-    const sp = { x: e.clientX - rect.left, y: e.clientY - rect.top };
-    const p  = this.camera.screenToWorld(sp);
-
-    const tol = worldTol(this.camera);
-    const strokesArr = this.state.strokes;
-
-    let hit = null;
-    let action = null; 
-    for (let i = strokesArr.length - 1; i >= 0; i--) {
-      const s = strokesArr[i];
-      if (!s || !s.bbox) continue;
-      const pad = Math.max(tol, s.w || 1);
-      if (p.x < s.bbox.minx - pad || p.x > s.bbox.maxx + pad || p.y < s.bbox.miny - pad || p.y > s.bbox.maxy + pad) continue;
-
-      if (s.kind === 'shape') {
-        if (s.shape === 'rect') {
-          if (nearRectEdge(s, p, Math.max(pad, s.w || 1))) { hit = s; action = 'stroke'; break; }
-          if (pointInRectShape(s, p)) { hit = s; action = 'fill'; break; }
-        } else if (s.shape === 'ellipse') {
-          if (nearEllipseEdge(s, p, Math.max(pad, s.w || 1), this.camera)) { hit = s; action = 'stroke'; break; }
-          if (pointInEllipseShape(s, p, this.camera)) { hit = s; action = 'fill'; break; }
-        } else if (s.shape === 'line') {
-          if (hitPolylinePathStroke({ kind:'path', pts:[{x:s.start.x,y:s.start.y},{x:s.end.x,y:s.end.y}], n:null }, p, Math.max(pad, s.w || 1))) {
-            hit = s; action = 'stroke'; break;
-          }
+    if (s.kind === 'shape') {
+      if (s.shape === 'rect') {
+        if (nearRectEdge(s, p, Math.max(pad, s.w || 1))) { hit = s; action = 'stroke'; break; }
+        if (pointInRectShape(s, p)) { hit = s; action = 'fill'; break; }
+      } else if (s.shape === 'ellipse') {
+        if (nearEllipseEdge(s, p, Math.max(pad, s.w || 1), camera)) { hit = s; action = 'stroke'; break; }
+        if (pointInEllipseShape(s, p, camera)) { hit = s; action = 'fill'; break; }
+      } else if (s.shape === 'line') {
+        if (hitPolylinePathStroke({ kind:'path', pts:[{x:s.start.x,y:s.start.y},{x:s.end.x,y:s.end.y}], n:null }, p, Math.max(pad, s.w || 1))) {
+          hit = s; action = 'stroke'; break;
         }
-      } else if (s.kind === 'path') {
-        if (hitPolylinePathStroke(s, p, Math.max(pad, s.w || 1))) { hit = s; action = 'stroke'; break; }
       }
+    } else if (s.kind === 'path') {
+      if (hitPolylinePathStroke(s, p, Math.max(pad, s.w || 1))) { hit = s; action = 'stroke'; break; }
     }
-    if (!hit) {
-      const enclosed = isEnclosedByLocalStrokes(this.state, this.camera, p);
-      if (enclosed) {
-        hit = pickNearestTopmost(strokesArr, p);
-        action = 'fill';
-      }
-    }
-
-    const newColor = this.state.settings.color || '#88ccff';
-    const newAlpha = this.state.settings.opacity ?? 1;
-
-    if (!hit) {
-      const prevBg = { ...this.state.background };
-      this.state.background = { color: newColor, alpha: newAlpha };
-      this.state.history?.pushBackground?.(prevBg, { ...this.state.background });
-      markDirty(); scheduleRender();
-      return;
-    }
-    const prev = { color: hit.color, alpha: hit.alpha, fill: hit.fill ?? false };
-    if (action === 'fill') {
-      hit.fill = true;
-      hit.color = newColor;
-      hit.alpha = newAlpha;
-    } else { 
-      hit.color = newColor;
-      hit.alpha = newAlpha;
-    }
-
-    const next = { color: hit.color, alpha: hit.alpha, fill: hit.fill ?? false };
-    this.state.history?.pushStyle?.(hit, prev, next);
-    markDirty(); scheduleRender();
   }
+  // Do not infer enclosure; only fill when the point is inside a shape.
+  // Otherwise, treat as background fill.
+
+  const newColor = state.settings.color || '#88ccff';
+  const newAlpha = state.settings.opacity ?? 1;
+
+  if (!hit) {
+    const prevBg = { ...state.background };
+    state.background = { color: newColor, alpha: newAlpha };
+    state.history?.pushBackground?.(prevBg, { ...state.background });
+    markDirty(); scheduleRender();
+    return;
+  }
+  const prev = { color: hit.color, alpha: hit.alpha, fill: !!hit.fill, fillColor: hit.fillColor ?? null, fillAlpha: hit.fillAlpha ?? null };
+  if (action === 'fill') {
+    hit.fill = true;
+    hit.fillColor = newColor;
+    hit.fillAlpha = newAlpha;
+  } else { 
+    // Stroke edge recolor
+    hit.color = newColor;
+    hit.alpha = newAlpha;
+  }
+
+  const next = { color: hit.color, alpha: hit.alpha, fill: !!hit.fill, fillColor: hit.fillColor ?? null, fillAlpha: hit.fillAlpha ?? null };
+  state.history?.pushStyle?.(hit, prev, next);
+  markDirty(); scheduleRender();
 }

@@ -909,7 +909,13 @@ function drawShapeWorld(ctx, s, camera, dpr = 1) {
     ctx.save();
     if (s.rotation) { ctx.translate(cx, cy); ctx.rotate(s.rotation); ctx.translate(-cx, -cy); }
     const lx = cx - w/2, ly = cy - h/2;
-    if (s.fill) { ctx.fillStyle = ctx.strokeStyle; ctx.fillRect(lx, ly, w, h); }
+    if (s.fill) {
+      ctx.save();
+      if (s.fillAlpha != null) ctx.globalAlpha = s.fillAlpha;
+      ctx.fillStyle = s.fillColor || ctx.strokeStyle;
+      ctx.fillRect(lx, ly, w, h);
+      ctx.restore();
+    }
     ctx.strokeRect(lx, ly, w, h);
     ctx.restore();
     return;
@@ -922,7 +928,13 @@ function drawShapeWorld(ctx, s, camera, dpr = 1) {
     ctx.beginPath();
     // Canvas ellipse supports a rotation argument directly:
     ctx.ellipse(cx, cy, rx, ry, s.rotation || 0, 0, Math.PI * 2);
-    if (s.fill) { ctx.fillStyle = ctx.strokeStyle; ctx.fill(); }
+    if (s.fill) {
+      ctx.save();
+      if (s.fillAlpha != null) ctx.globalAlpha = s.fillAlpha;
+      ctx.fillStyle = s.fillColor || ctx.strokeStyle;
+      ctx.fill();
+      ctx.restore();
+    }
     ctx.stroke(); return;
   }
 }

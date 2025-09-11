@@ -7,6 +7,7 @@ import { initUI, getRecentColors, setRecentColors, clearRecentColors } from './u
 import { grid, applyWorkerIndex, rebuildIndex, clearIndex } from './spatial_index.js';
 import { saveViewportPNG, saveViewportThumb } from './export.js';
 import { removeStroke, addShape, selectForTransform } from './strokes.js';
+import { paintAtPoint } from './tools/paint.js';
 import { PanTool } from './tools/pan.js';
 import { attachHistory } from './history.js';
 import { initGalleryView, showGallery, hideGallery } from './gallery.js';
@@ -984,12 +985,31 @@ ctxResetView?.addEventListener('click', async () => {
 
 ctxDeleteSel?.addEventListener('click', () => {
   const st = state;
-  const sel = Array.from(st.selection || []);
+  let sel = Array.from(st.selection || []);
+  // If nothing is selected, but a text is actively being edited, target it
+  if (!sel.length) {
+    const editingText = st.strokes.find(s => s && s.shape === 'text' && s.editing);
+    if (editingText) sel = [editingText];
+  }
   if (!sel.length) { hideCtxMenu(); return; }
-  const idxs = sel.map(s => st.strokes.indexOf(s));
-  for (const s of sel) removeStroke(st, s);
-  st.selection.clear();
-  st.history?.pushDeleteGroup?.(sel, idxs);
+  const removed = [];
+  const indices = [];
+  for (const s of sel) {
+    // If selection contains a different object instance, resolve by id
+    let i = st.strokes.indexOf(s);
+    if (i === -1 && s && s.id != null) {
+      i = st.strokes.findIndex(t => t && t.id === s.id);
+    }
+    if (i !== -1) {
+      const target = st.strokes[i];
+      try { if (target.shape === 'text') target.editing = false; } catch {}
+      removeStroke(st, target);
+      removed.push(target);
+      indices.push(i);
+    }
+  }
+  try { st.selection.clear(); } catch {}
+  if (removed.length) st.history?.pushDeleteGroup?.(removed, indices);
   hideCtxMenu();
 });
 
@@ -1148,6 +1168,76 @@ function installImageDragDrop() {
 
 installImageDragDrop();
 
+// --- Drag-paint from color panel (drop-to-paint only) --------------------
+function isColorDrag(ev){
+  try { if (window._dragPaint) return true; } catch {}
+  try { return !!ev.dataTransfer?.getData('application/x-color'); } catch { return false; }
+}
+function endDragPaint(){ try { window._dragPaint = null; } catch {} }
+
+const dHost = document.getElementById('canvasContainer') || canvas;
+let _fillRevealActive = false;
+function animateRadialReveal(prevBmp, clientX, clientY, durMs = 900){
+  try{
+    if (!overlay || !prevBmp) return;
+    const rect = canvas.getBoundingClientRect();
+    const s = Math.max(1e-6, canvas.width / Math.max(1, canvas.clientWidth));
+    const cx = (clientX - rect.left) * s;
+    const cy = (clientY - rect.top) * s;
+    const w = canvas.width, h = canvas.height;
+    const corners = [ [0,0], [w,0], [0,h], [w,h] ];
+    let maxR = 0; for (const c of corners){ const dx=c[0]-cx, dy=c[1]-cy; const r=Math.hypot(dx,dy); if (r>maxR) maxR=r; }
+    const ctxO = overlay.getContext('2d', { alpha: true });
+    _fillRevealActive = true;
+    overlay.style.display = 'block';
+    const t0 = performance.now();
+    function step(){
+      if (!_fillRevealActive) return;
+      const t = (performance.now() - t0) / Math.max(1, durMs);
+      const ease = t<0?0:(t>1?1:(1 - Math.pow(1 - t, 3))); // easeOutCubic
+      const r = maxR * ease;
+      ctxO.setTransform(1,0,0,1,0,0);
+      ctxO.clearRect(0,0,w,h);
+      // Draw previous snapshot fully, then punch a hole to reveal new paint
+      ctxO.globalCompositeOperation = 'source-over';
+      ctxO.drawImage(prevBmp, 0, 0);
+      ctxO.globalCompositeOperation = 'destination-out';
+      ctxO.beginPath(); ctxO.arc(cx, cy, r, 0, Math.PI*2); ctxO.closePath(); ctxO.fill();
+      ctxO.globalCompositeOperation = 'source-over';
+      if (t < 1) requestAnimationFrame(step); else { _fillRevealActive = false; overlay.style.display = 'none'; try{ prevBmp.close?.(); }catch{} }
+    }
+    requestAnimationFrame(step);
+  }catch{}
+}
+if (dHost){
+  const prevent = (e) => { if (isColorDrag(e)) { e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = 'copy'; } };
+  dHost.addEventListener('dragenter', (e)=>{ if (isColorDrag(e)) { prevent(e); } });
+  dHost.addEventListener('dragover',  (e)=>{ if (isColorDrag(e)) { prevent(e); } });
+  dHost.addEventListener('drop',      async (e)=>{
+    if (isColorDrag(e)) {
+      prevent(e);
+      try {
+        // Hide color panel UI immediately on drop
+        try { const cp = document.getElementById('colorPanel'); if (cp){ cp.classList.remove('open'); cp.style.display='none'; } } catch {}
+        const prevBmp = await createImageBitmap(canvas);
+        const payload = (function(){ try { return window._dragPaint || {}; } catch { return {}; } })();
+        const prevColor = state.settings?.color;
+        const prevOpacity = state.settings?.opacity;
+        if (payload.color) state.settings.color = payload.color;
+        if (payload.opacity != null) state.settings.opacity = payload.opacity;
+        paintAtPoint({ canvas, camera, state }, { clientX: e.clientX, clientY: e.clientY });
+        // restore user settings
+        if (prevColor != null) state.settings.color = prevColor;
+        if (prevOpacity != null) state.settings.opacity = prevOpacity;
+        animateRadialReveal(prevBmp, e.clientX, e.clientY, 900);
+      } catch {}
+      endDragPaint();
+    }
+  });
+  dHost.addEventListener('dragleave', (e)=>{ if (isColorDrag(e)) { prevent(e); } });
+}
+window.addEventListener('dragend', endDragPaint);
+
 // --- Advanced settings ------------------------------------------------------
 function persistPerfProfile() {
   try { localStorage.setItem('dc_perf_profile', JSON.stringify(state._perf)); } catch {}
@@ -1298,12 +1388,9 @@ export function openDoc(docOrId) {
     if (u.settings && typeof u.settings === 'object') {
       state.settings = { ...state.settings, ...u.settings };
     }
-    if (u.brush) state.brush = u.brush;
+    // Brush preset removed; always 'pen'
+    // if (u.brush) state.brush = u.brush;
     if (u.tool) setTool(u.tool);
-    try {
-      const qb = document.getElementById('quickBrush');
-      if (qb) qb.value = state.brush;
-    } catch {}
   }
 
   rebuildIndex(grid, state.strokes);
