@@ -1,6 +1,6 @@
 {
   "name": "deep-canvas",
-  "version": "1.0.0",
+  "version": "1.0.7",
   "description": "Deep Canvas — desktop",
   "main": "main.js",
   "type": "commonjs",
@@ -70,3 +70,4 @@
     }
   }
 }
+
