@@ -15,6 +15,7 @@ import { paintAtPoint } from './tools/paint.js';
 import { PanTool } from './tools/pan.js';
 import { attachHistory } from './history.js';
 import { initGalleryView, showGallery, hideGallery } from './gallery.js';
+import { initPlugins } from './plugins.js';
 document.documentElement.setAttribute('data-theme', 'dark');
 
 import {
@@ -938,6 +939,7 @@ const uiAPI = initUI({
 });
 
 window._endless = { state, camera, grid };
+initPlugins();
 
 subscribe(() => {
   const stats = render(state, camera, ctx, canvas, { dpr });
