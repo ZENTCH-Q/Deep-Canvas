@@ -179,13 +179,27 @@
   #colorPanel{
     position:fixed;left:0;top:0;transform:translate(-50%,-108%);display:none;background:var(--glass);
     border:1px solid var(--border);border-radius:12px;padding:12px;box-shadow:0 16px 44px rgba(0,0,0,.38);
-    backdrop-filter:saturate(120%) blur(12px);z-index:6;min-width:280px;opacity:0;transition:opacity .12s,transform .12s
+    backdrop-filter:saturate(120%) blur(12px);z-index:6;
+    /* Responsive sizing without scrollbars */
+    box-sizing: border-box;
+    min-width:240px; width:min(520px, calc(100vw - 24px));
+    overflow:hidden;
+    /* Scale from edge closest to the chip */
+    transform-origin: bottom center;
+    opacity:0;transition:opacity .12s,transform .12s
   }
-  #colorPanel.open{display:block;opacity:1;transform:translate(-50%,-100%)}
+  #colorPanel.open{display:block;opacity:1;transform:translate(-50%,-100%) scale(var(--panel-scale, 1))}
+  #colorPanel.open.below{transform:translate(-50%,0) scale(var(--panel-scale, 1))}
+  #colorPanel.below{ transform-origin: top center; }
   #colorPanel::after{
-    content:"";position:absolute;left:50%;bottom:-8px;transform:translateX(-50%);
+    content:"";position:absolute;left:var(--anchor-x, 50%);bottom:-8px;transform:translateX(-50%);
     border-left:8px solid transparent;border-right:8px solid transparent;border-top:8px solid var(--glass);
     filter:drop-shadow(0 -1px 0 var(--border))
+  }
+  #colorPanel.below::after{
+    bottom:auto; top:-8px;
+    border-top:none; border-bottom:8px solid var(--glass);
+    filter:drop-shadow(0 1px 0 var(--border))
   }
   .prop-col{display:flex;flex-direction:column;gap:10px}
   .prop-row{display:flex;align-items:center;justify-content:space-between;gap:10px}

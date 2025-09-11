@@ -1,5 +1,5 @@
 // main.js
-const { app, BrowserWindow, nativeTheme, protocol } = require('electron');
+const { app, BrowserWindow, nativeTheme, protocol, Menu } = require('electron');
 const path = require('path');
 const isDev = !app.isPackaged;
 
@@ -35,6 +35,11 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  // Hide the application menu in production builds
+  if (!isDev) {
+    Menu.setApplicationMenu(null);
+  }
+
   protocol.registerFileProtocol('app', (request, cb) => {
     const url = request.url.replace('app://', '');
     cb({ path: path.normalize(`${__dirname}/${url}`) });

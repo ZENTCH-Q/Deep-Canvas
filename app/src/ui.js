@@ -8,7 +8,7 @@ import { transformStrokeGeom } from './strokes.js';
 const DEFAULT_PALETTE = [
   '#ffffff', '#e7ebf3', '#cfd7e3', '#9aa5b1', '#5b6b79', '#2a313c', '#121619', '#000000',
   '#ff6b6b', '#ffa94d', '#ffe66d', '#8ce99a', '#66d9e8', '#6cc3ff', '#5c7cfa', '#d0bfff',
-  '#f783ac', '#12b886', '#2f9e44', '#f59f00'
+  '#f783ac', '#12b886'
 ];
 const LS_RECENT_KEY = 'endless_recent_colors_v2';
 const LEGACY_KEYS = ['endless_recent_colors_v1','endless_recent_colors','endless_recent_colors_v0'];
@@ -63,6 +63,7 @@ function buildSwatches(host, currentGetter, onPick){
   if (!host) return { highlight:()=>{}, refreshRecent:()=>{}, replaceRecentAt:()=>{} };
   host.innerHTML = '';
   let recentNode = null;
+  let activeRecentIndex = -1;
 
   function makeRow(title, colors, { allowReplace=false }={}){
     const row = document.createElement('div'); row.className='sw-row';
@@ -77,7 +78,12 @@ function buildSwatches(host, currentGetter, onPick){
       try { b.setAttribute('draggable','true'); } catch {}
       b.dataset.hex=h; if (allowReplace) b.dataset.idx=String(idx);
       b.setAttribute('aria-label',`Use color ${h}`);
-      b.addEventListener('click',(ev)=>{ if (allowReplace && ev.altKey){ replaceRecentAt(idx, currentGetter()); return; } onPick(h); });
+      b.addEventListener('click',(ev)=>{
+        if (allowReplace && ev.altKey){ replaceRecentAt(idx, currentGetter()); return; }
+        // Track which recent chip was picked so edits replace it
+        activeRecentIndex = allowReplace ? idx : -1;
+        onPick(h);
+      });
       if (allowReplace){
         b.addEventListener('contextmenu',(ev)=>{ ev.preventDefault(); replaceRecentAt(idx, currentGetter()); });
       }
@@ -86,13 +92,8 @@ function buildSwatches(host, currentGetter, onPick){
     return row;
   }
 
-  function renderRecentRow(prependHex){
+  function renderRecentRow(){
     const arr = loadRecent();
-    if (prependHex){
-      const hh = toHex6(prependHex); if (hh){
-        const i=arr.indexOf(hh); if (i!==-1) arr.splice(i,1); arr.unshift(hh);
-      }
-    }
     const node = makeRow('Recent', arr.slice(0, MAX_RECENT), { allowReplace:true });
     if (recentNode) host.replaceChild(node, recentNode); else host.appendChild(node);
     recentNode = node;
@@ -114,7 +115,13 @@ function buildSwatches(host, currentGetter, onPick){
   host.appendChild(makeRow('Palette', DEFAULT_PALETTE));
   highlight();
 
-  return { highlight, refreshRecent(newHex){ renderRecentRow(newHex); highlight(); }, replaceRecentAt };
+  return { 
+    highlight, 
+    refreshRecent(){ renderRecentRow(); highlight(); }, 
+    replaceRecentAt,
+    getActiveRecentIndex(){ return activeRecentIndex; },
+    clearActiveRecentIndex(){ activeRecentIndex = -1; }
+  };
 }
 
 function initColorUI(state){
@@ -238,8 +245,14 @@ function initColorUI(state){
   function setColor(hex, { push=true }={}){
     const h=toHex6(hex); if (!h) return;
     current=h; if (input && input.value.toLowerCase()!==h) input.value=h;
-    state.settings.color=h; if (push) pushRecent(h);
-    setChip(h); markDirty(); scheduleRender(); swAPI.highlight(); swAPI.refreshRecent(h);
+    state.settings.color=h;
+    // If user had selected a Recent chip, replace that slot instead of pushing
+    const idx = (typeof swAPI.getActiveRecentIndex === 'function') ? swAPI.getActiveRecentIndex() : -1;
+    if (push) {
+      if (idx != null && idx >= 0) { swAPI.replaceRecentAt(idx, h); }
+      else { pushRecent(h); }
+    }
+    setChip(h); markDirty(); scheduleRender(); swAPI.highlight(); swAPI.refreshRecent();
   }
 
   input?.addEventListener('input', ()=>setColor(input.value));
@@ -266,11 +279,53 @@ function initColorPanelHover(){
   const colorPanel = document.getElementById('colorPanel');
 
   function place(){
-    const r = colorBtn.getBoundingClientRect();
-    colorPanel.style.left = ((r.left+r.right)/2)+'px';
-    colorPanel.style.top  = (r.top-10)+'px';
+    if (!colorBtn || !colorPanel) return;
+    // Ensure panel is measurable
+    const prevDisplay = colorPanel.style.display;
+    const prevVis = colorPanel.style.visibility;
+    colorPanel.style.display = 'block';
+    colorPanel.style.visibility = 'hidden';
+
+    // Measure needed sizes
+    let btnRect = colorBtn.getBoundingClientRect();
+    const panelRect = colorPanel.getBoundingClientRect();
+    // Use measured responsive size with sensible minimums
+    const pw = Math.max(240, Math.ceil(panelRect.width || 0));
+    const ph = Math.max(140, Math.ceil(panelRect.height || 0));
+    const margin = 12;
+
+    // Do not move the dock; only position the panel to fit.
+
+    // Available space and placement side (prefer the side with more room)
+    const spaceAbove = btnRect.top - margin;
+    const spaceBelow = (window.innerHeight - btnRect.bottom) - margin;
+    const placeBelow = spaceBelow >= spaceAbove;
+    colorPanel.classList.toggle('below', !!placeBelow);
+
+    // Compute scale so the panel fully fits without scrollbars
+    const availV = Math.max(0, (placeBelow ? spaceBelow : spaceAbove) - 10);
+    const availW = Math.max(0, window.innerWidth - 2 * margin);
+    const scaleH = pw > 0 ? (availW / pw) : 1;
+    const scaleV = ph > 0 ? (availV / ph) : 1;
+    const scale = Math.max(0.5, Math.min(1, Math.min(scaleH, scaleV)));
+    colorPanel.style.setProperty('--panel-scale', String(scale));
+
+    // Compute final placement using scaled width for clamping
+    const cx2 = (btnRect.left + btnRect.right) / 2;
+    const halfScaledW = (pw * scale) / 2;
+    let left = cx2;
+    left = Math.max(margin + halfScaledW, Math.min((window.innerWidth - margin - halfScaledW), left));
+    const anchorPct = ((cx2 - (left - halfScaledW)) / Math.max(1, (pw * scale))) * 100;
+    colorPanel.style.setProperty('--anchor-x', `${Math.max(6, Math.min(94, Math.round(anchorPct)))}%`);
+
+    colorPanel.style.left = `${left}px`;
+    colorPanel.style.top = placeBelow ? `${btnRect.bottom + 10}px` : `${btnRect.top - 10}px`;
+
+    // Restore visibility
+    colorPanel.style.visibility = prevVis || '';
+    colorPanel.style.display = prevDisplay || '';
   }
-  function open(){ place(); colorPanel.style.display='block'; requestAnimationFrame(()=>colorPanel.classList.add('open')); }
+  function open(){ colorPanel.style.display='block'; place(); requestAnimationFrame(()=>colorPanel.classList.add('open')); }
   function close(){ colorPanel.classList.remove('open'); setTimeout(()=>{ if(!colorPanel.classList.contains('open')) colorPanel.style.display='none'; },120); }
 
   let t=0; const soon=()=>{ clearTimeout(t); t=setTimeout(close,120); };
