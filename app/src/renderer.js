@@ -1623,22 +1623,9 @@ if (state.selection && state.selection.size) {
       const w = bb.maxx - bb.minx, h = bb.maxy - bb.miny;
       ctx.beginPath(); ctx.rect(x, y, w, h); ctx.fill(); ctx.stroke();
       ctx.restore();
-  // Determine whether to show the move-handle for multi-selection: show
-  // it when all selected items share the same kind and that kind supports
-  // a move handle (shape or path). This keeps visuals consistent with
-  // hitSelectionUI which now exposes the move handle for such multis.
-  let showMoveMulti = false;
-  try {
-    const selArr = Array.from(state.selection || []);
-    if (selArr.length > 0) {
-      const k = selArr[0]?.kind;
-      if (k === 'shape' || k === 'path') {
-        showMoveMulti = selArr.every(s => s && s.kind === k);
-      }
-    }
-  } catch {}
-  drawSelectionHandles(ctx, bb, camera, theme, dpr, state._hoverHandle || null, showMoveMulti, false);
-
+      // Always show move handle for multi-selection.
+      const showMoveMulti = true;
+      drawSelectionHandles(ctx, bb, camera, theme, dpr, state._hoverHandle || null, showMoveMulti, false);
       // label
       const wPx = Math.max(0, Math.round(w * camera.scale));
       const hPx = Math.max(0, Math.round(h * camera.scale));

@@ -96,25 +96,16 @@ export function hitSelectionUI(worldPt, state, camera){
   if (!bb) return null;
   const h = hitHandle(worldPt, bb, camera);
   if (h) return { type: 'handle', handle: h };
-  // Move handle (axis-aligned) like text's handle, for shapes
+  // Always expose the axis-aligned move handle for multi/single select.
   try {
-    // Allow move-handle for selection. Previously only single-selection
-    // (size === 1) was considered. If all selected items share the same
-    // kind and that kind supports a move-handle (shape or path), show
-    // the same move-handle for the whole selection bbox.
     if (state?.selection && state.selection.size >= 1) {
-      const arr = Array.from(state.selection);
-      const firstKind = arr[0]?.kind;
-      const sameKind = arr.every(x => x && x.kind === firstKind);
-      if (sameKind && (firstKind === 'shape' || firstKind === 'path')) {
-        const r = handleWorldRadius(camera);
-        const rotOffsetWorld = 28 / Math.max(1e-8, camera.scale);
-        const diag = rotOffsetWorld / Math.SQRT2;
-        const mvx = bb.maxx + diag;
-        const mvy = bb.miny - diag;
-        const dxm = worldPt.x - mvx, dym = worldPt.y - mvy;
-        if ((dxm*dxm + dym*dym) <= (r*r)) return { type: 'move' };
-      }
+      const r = handleWorldRadius(camera);
+      const rotOffsetWorld = 28 / Math.max(1e-8, camera.scale);
+      const diag = rotOffsetWorld / Math.SQRT2;
+      const mvx = bb.maxx + diag;
+      const mvy = bb.miny - diag;
+      const dxm = worldPt.x - mvx, dym = worldPt.y - mvy;
+      if ((dxm*dxm + dym*dym) <= (r*r)) return { type: 'move' };
     }
   } catch {}
   if (pointInRect(worldPt, bb)) return { type: 'inside' };
@@ -273,10 +264,8 @@ export class SelectTool {
           this.mode = 'move'; this.handle = 'move'; this.startBBox = bb;
         } else if (h){
           this.mode = 'scale'; this.handle = h; this.startBBox = bb;
-        } else if (false && pointInRect(this.downWorld, bb)) {
-          // Previously a click inside the selection bbox without a handle started a
-          // move. We no longer start transform 'move' from an inside click; move
-          // should only begin when the explicit move-handle is clicked.
+        } else if (pointInRect(this.downWorld, bb)) {
+          // Click inside the bbox starts a move again.
           this.mode = 'move'; this.startBBox = bb;
         } else {
           this.mode = null;
