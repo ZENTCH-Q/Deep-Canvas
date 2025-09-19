@@ -1067,12 +1067,12 @@ function getLODView(stroke, camera, fast, state) {
   }
 }
 
-function drawSelectionHandles(ctx, bb, camera, theme, dpr, hoverKey = null, showMove = false) {
+function drawSelectionHandles(ctx, bb, camera, theme, dpr, hoverKey = null, showMove = false, showMoveIsPath = false) {
   const x0 = bb.minx, y0 = bb.miny, x1 = bb.maxx, y1 = bb.maxy;
   const cx = (x0 + x1) * 0.5;
   const px = 1 / Math.max(1e-8, dpr * camera.scale);
   let HANDLE_RADIUS_PX = 5;     
-  const ROT_OFFSET_PX    = 28;   
+  let ROT_OFFSET_PX    = 28;   
   const LEADER_GAP_PX    = 10;       
 
   // Dynamic pixel radius: larger when zoomed out
@@ -1112,6 +1112,9 @@ function drawSelectionHandles(ctx, bb, camera, theme, dpr, hoverKey = null, show
   if (showMove) {
   try {
     ctx.beginPath();
+    // If the move-handle is being shown for a freehand 'path' stroke, nudge
+    // the rotation/move offset outwards a bit so the handle is easier to see.
+    if (showMoveIsPath) ROT_OFFSET_PX = Math.round(ROT_OFFSET_PX * 1.4);
     const diag = (ROT_OFFSET_PX * px) / Math.SQRT2;
     const mvx = x1 + diag;
     const mvy = y0 - diag;
@@ -1549,9 +1552,11 @@ if (state.selection && state.selection.size) {
       const w = bb.maxx - bb.minx, h = bb.maxy - bb.miny;
       ctx.beginPath(); ctx.rect(x, y, w, h); ctx.fill(); ctx.stroke();
       ctx.restore();
-      const hover = (only && only._hoverHandle) || state._hoverHandle || null;
-      const showMove = !!only && only.kind === 'shape';
-      drawSelectionHandles(ctx, bb, camera, theme, dpr, hover, showMove);
+  const hover = (only && only._hoverHandle) || state._hoverHandle || null;
+  // Show the explicit move-handle for shapes and path strokes so stroke
+  // selection UI matches the shape tools' selection appearance.
+  const showMove = !!only && (only.kind === 'shape' || only.kind === 'path');
+  drawSelectionHandles(ctx, bb, camera, theme, dpr, hover, showMove, !!(only && only.kind === 'path'));
 
       // Label (same as before)
       const wPx = Math.max(0, Math.round(w * camera.scale));
@@ -1618,7 +1623,21 @@ if (state.selection && state.selection.size) {
       const w = bb.maxx - bb.minx, h = bb.maxy - bb.miny;
       ctx.beginPath(); ctx.rect(x, y, w, h); ctx.fill(); ctx.stroke();
       ctx.restore();
-      drawSelectionHandles(ctx, bb, camera, theme, dpr, state._hoverHandle || null, false);
+  // Determine whether to show the move-handle for multi-selection: show
+  // it when all selected items share the same kind and that kind supports
+  // a move handle (shape or path). This keeps visuals consistent with
+  // hitSelectionUI which now exposes the move handle for such multis.
+  let showMoveMulti = false;
+  try {
+    const selArr = Array.from(state.selection || []);
+    if (selArr.length > 0) {
+      const k = selArr[0]?.kind;
+      if (k === 'shape' || k === 'path') {
+        showMoveMulti = selArr.every(s => s && s.kind === k);
+      }
+    }
+  } catch {}
+  drawSelectionHandles(ctx, bb, camera, theme, dpr, state._hoverHandle || null, showMoveMulti, false);
 
       // label
       const wPx = Math.max(0, Math.round(w * camera.scale));
@@ -1698,14 +1717,16 @@ if (state.selection && state.selection.size) {
   }
 
   // Only draw the marquee when the Select tool is active. Other tools shouldn't
-  // render the selection marquee (prevents a dashed box appearing while drawing shapes).
+  // render the selection marquee. Use the same solid selection styling used
+  // for shape selection boxes so the marquee matches the shape tools' look.
   if (state._marquee && state.tool === 'select') {
     ctx.save();
     const px = 1 / Math.max(1e-8, dpr * camera.scale);
     ctx.lineWidth = Math.max(px, 0.75 * px);
-    ctx.setLineDash([6 * px, 4 * px]);
-    ctx.strokeStyle = theme.marqueeStroke;
-    ctx.fillStyle = theme.marqueeFill;
+    // Use solid stroke (no dashes) and the same theme colors as selection
+    ctx.setLineDash([]);
+    ctx.strokeStyle = theme.selStroke;
+    ctx.fillStyle = theme.selFill;
     const m = state._marquee;
     const x = Math.min(m.minx, m.maxx), y = Math.min(m.miny, m.maxy);
     const w = Math.abs(m.maxx - m.minx), h = Math.abs(m.maxy - m.miny);

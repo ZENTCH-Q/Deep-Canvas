@@ -98,9 +98,15 @@ export function hitSelectionUI(worldPt, state, camera){
   if (h) return { type: 'handle', handle: h };
   // Move handle (axis-aligned) like text's handle, for shapes
   try {
-    if (state?.selection && state.selection.size === 1) {
-      const only = Array.from(state.selection)[0];
-      if (only && only.kind === 'shape') {
+    // Allow move-handle for selection. Previously only single-selection
+    // (size === 1) was considered. If all selected items share the same
+    // kind and that kind supports a move-handle (shape or path), show
+    // the same move-handle for the whole selection bbox.
+    if (state?.selection && state.selection.size >= 1) {
+      const arr = Array.from(state.selection);
+      const firstKind = arr[0]?.kind;
+      const sameKind = arr.every(x => x && x.kind === firstKind);
+      if (sameKind && (firstKind === 'shape' || firstKind === 'path')) {
         const r = handleWorldRadius(camera);
         const rotOffsetWorld = 28 / Math.max(1e-8, camera.scale);
         const diag = rotOffsetWorld / Math.SQRT2;
