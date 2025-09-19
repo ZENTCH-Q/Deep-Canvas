@@ -629,6 +629,8 @@ function ensureFSWidget(){
       const cam = bindState?.camera || camera;
       currentShape.fontFamily = fam || 'system-ui,-apple-system,Segoe UI,Roboto,sans-serif';
       try { relayoutTextShape(currentShape, cam); } catch {}
+      // Persist chosen font into state so it becomes part of the document's UI settings
+      try { bindState?.state && (bindState.state.settings = { ...(bindState.state.settings || {}), fontFamily: fam }); } catch {}
       markDirty(); scheduleRender();
     });
     // prevent TextTool from intercepting typing while select has focus

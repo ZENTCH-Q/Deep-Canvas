@@ -500,7 +500,8 @@ export class TextTool {
     });
 
     s.text        = '';
-    s.fontFamily  = s.fontFamily || 'system-ui,-apple-system,Segoe UI,Roboto,sans-serif';
+  // Prefer the per-document setting (state.settings.fontFamily) when creating a new text shape.
+  s.fontFamily  = (this.state?.settings?.fontFamily) || s.fontFamily || 'system-ui,-apple-system,Segoe UI,Roboto,sans-serif';
     s.fontSize    = fsWorld;        // fixed size (no autosize)
     s.lineHeight  = lhMul;          // Ã— fontSize
     s.rotation    = s.rotation || 0;

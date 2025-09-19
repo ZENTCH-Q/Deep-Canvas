@@ -206,7 +206,7 @@ function extractDocDataFromState() {
     ui: {
       tool: state.tool,
       brush: state.brush,
-      settings: { ...state.settings },          // { color, size, opacity, fill }
+      settings: { ...state.settings },          // { color, size, opacity, fill, fontFamily? }
       palette: getRecentColors()                // recent colors swatch list
     }
   };
