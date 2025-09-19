@@ -178,7 +178,8 @@ export function snapshotGeometry(s){
       start: { ...s.start },
       end: { ...s.end },
       shape: s.shape,
-      fill: !!s.fill
+      fill: !!s.fill,
+      rotation: Number.isFinite(s.rotation) ? s.rotation : 0
     };
   }
 }
@@ -205,6 +206,8 @@ export function restoreGeometry(s, snap){
     s.end   = { ...snap.end };
     s.shape = snap.shape;
     s.fill  = !!snap.fill;
+    // restore rotation when present in the snapshot (important for transforms)
+    if (Number.isFinite(snap.rotation)) s.rotation = snap.rotation;
   }
   delete s._lodCache;
 }
@@ -274,10 +277,12 @@ export function transformStrokeGeom(s, xf){
       maxx: Math.max(a.x, b.x),
       maxy: Math.max(a.y, b.y),
     };
-    if (typeof s.w === 'number') s.w = s.w * kw;
-   if (s.shape === 'text' && typeof s.fontSize === 'number') {
-     s.fontSize = s.fontSize * kw;
-   }
+      if (typeof s.w === 'number') s.w = s.w * kw;
+      // NOTE: Do not scale `fontSize` for text shapes when transforming geometry.
+      // Resizing a text box should only change the box dimensions and reflow/wrap
+      // the text, not change the font size. Previously we multiplied fontSize by
+      // kw here which caused text to resize when the box was resized. Leave
+      // s.fontSize untouched for shapes with s.shape === 'text'.
   }
   delete s._lodCache;
   try {

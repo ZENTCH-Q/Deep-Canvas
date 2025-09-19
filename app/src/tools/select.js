@@ -363,7 +363,9 @@ export class SelectTool {
           s.start = { ...m.before.start }; s.end = { ...m.before.end };
         }
         s.w = m.before.w; s.bbox = { ...m.before.bbox };
-        if (this.mode === 'rotate' && s.kind === 'shape' && (s.shape === 'rect' || s.shape === 'ellipse' || s.shape === 'image')) {
+        // For rotate mode, handle axis-aligned shapes and text by setting
+        // the shape's `rotation` property and keeping start/end axis-aligned.
+        if (this.mode === 'rotate' && s.kind === 'shape' && (s.shape === 'rect' || s.shape === 'ellipse' || s.shape === 'image' || s.shape === 'text')) {
           // keep size/position from 'before', only add rotation
           s.start = { ...m.before.start };
           s.end   = { ...m.before.end };
