@@ -162,8 +162,8 @@ function drawTextBoxWorld(ctx, camera, s, dpr = 1) {
   const lx0 = lx + pad; // left padded edge
   const rx0 = (-lx) - pad; // right padded edge (since -lx = w/2)
 
-  // Selection highlight (rendered behind text when editing)
-  if (s.editing && Number.isFinite(s.selStart) && Number.isFinite(s.selEnd) && s.selStart !== s.selEnd) {
+  // Selection highlight (rendered behind text when a selection exists)
+  if (Number.isFinite(s.selStart) && Number.isFinite(s.selEnd) && s.selStart !== s.selEnd) {
     const a = Math.min(s.selStart, s.selEnd);
     const b = Math.max(s.selStart, s.selEnd);
     try {
@@ -1695,7 +1695,9 @@ if (state.selection && state.selection.size) {
     }
   }
 
-  if (state._marquee) {
+  // Only draw the marquee when the Select tool is active. Other tools shouldn't
+  // render the selection marquee (prevents a dashed box appearing while drawing shapes).
+  if (state._marquee && state.tool === 'select') {
     ctx.save();
     const px = 1 / Math.max(1e-8, dpr * camera.scale);
     ctx.lineWidth = Math.max(px, 0.75 * px);

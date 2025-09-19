@@ -400,7 +400,10 @@ export class TextTool {
       this._beginEditing(s);
       scheduleRender();
     };
-    this.canvas.addEventListener('dblclick', this._onCanvasDblClick, { capture:false });
+  this.canvas.addEventListener('dblclick', this._onCanvasDblClick, { capture:false });
+    // Document-level fallback handlers (bound so they can be added/removed)
+    this._docSelectMove = (e) => this._docPointerMoveFallback(e);
+    this._docSelectUp   = (e) => this._docPointerUpFallback(e);
   }
 
   _setCursor(c){ try{ this.canvas.style.cursor=c; }catch{} }
@@ -420,6 +423,9 @@ export class TextTool {
     window.removeEventListener('paste',   this._onPaste,   { capture: true });
     window.removeEventListener('copy',    this._onCopy,    { capture: true });
     window.removeEventListener('cut',     this._onCut,     { capture: true });
+    // Ensure fallback listeners removed
+    try { document.removeEventListener('pointermove', this._docSelectMove, { capture: true }); } catch {}
+    try { document.removeEventListener('pointerup',   this._docSelectUp,   { capture: true }); } catch {}
     try { window.__dcHideTextSizeUI?.(); } catch {}
     try { this.canvas.removeEventListener('dblclick', this._onCanvasDblClick, { capture:false }); } catch {}
     clearInterval(this._blinkTimer);
@@ -538,12 +544,19 @@ export class TextTool {
     if (!Number.isFinite(xPx)) xPx = 0;
     xPx = Math.max(0, Math.min(lineWidthPx, xPx));
 
-    // Compare in *pixels* (measureText is px)
+    // Compare in *pixels* using midpoints between characters so clicks fall between letters
     let col = 0;
-    for (let i = 0; i <= text.length; i++) {
-      const wPx = measure(this._ctx, text.slice(0, i));
-      if (xPx <= wPx) { col = i; break; }
-      col = i;
+    if (text.length === 0) {
+      col = 0;
+    } else {
+      const pos = new Array(text.length + 1);
+        const pad = 0.25 * (s.fontSize || scrPxToWorld(DEFAULT_FS_SCR, this.camera));
+        const lineH = (s.lineHeight || 1.25) * (s.fontSize || scrPxToWorld(DEFAULT_FS_SCR, this.camera));
+      for (let i = 0; i < text.length; i++){
+        const mid = (pos[i] + pos[i+1]) * 0.5;
+        if (xPx <= mid) { col = i; break; }
+        col = i+1;
+      }
     }
     // clamp into valid range
     if (col < 0) col = 0;
@@ -582,10 +595,16 @@ export class TextTool {
     if (!Number.isFinite(xPx)) xPx = 0;
     xPx = Math.max(0, Math.min(lineWidthPx, xPx));
     let col = 0;
-    for (let i = 0; i <= text.length; i++) {
-      const wPx = this._ctx.measureText(text.slice(0, i)).width;
-      if (xPx <= wPx) { col = i; break; }
-      col = i;
+    if (text.length === 0) {
+      col = 0;
+    } else {
+      const pos = new Array(text.length + 1);
+      for (let i = 0; i <= text.length; i++) pos[i] = this._ctx.measureText(text.slice(0, i)).width;
+      for (let i = 0; i < text.length; i++){
+        const mid = (pos[i] + pos[i+1]) * 0.5;
+        if (xPx <= mid) { col = i; break; }
+        col = i+1;
+      }
     }
     return lineColToIndex(s, line, Math.max(0, Math.min(text.length, col)));
   }
@@ -652,7 +671,6 @@ export class TextTool {
     s.selStart = s.selEnd = s.caret;
     return a;
   }
-
   _pushEditSnapshot(){
     const s = this._active; if (!s) return;
     try {
@@ -720,6 +738,35 @@ export class TextTool {
     return this._active;
   }
 
+  // Document-level fallback to update selection if pointer capture isn't available
+  _docPointerMoveFallback(e){
+    try {
+      if (!this._selecting || !this._active) return;
+      const r = this.canvas.getBoundingClientRect();
+      const screen = { x: e.clientX - r.left, y: e.clientY - r.top };
+      const world  = this.camera.screenToWorld(screen);
+      const idx = this._caretIndexFromPoint(world);
+      const s = this._active;
+      s.caret = idx;
+      const anchor = Number.isFinite(this._selAnchor) ? this._selAnchor : (s.selStart ?? idx);
+      s.selStart = Math.min(anchor, idx); s.selEnd = Math.max(anchor, idx);
+      layoutTextAndGrow(s, this.camera, this._ctx, this._blinkOn);
+      markDirty(); scheduleRender();
+    } catch (err) { /* ignore fallback errors */ }
+  }
+
+  _docPointerUpFallback(e){
+    try {
+        if (this._selecting) {
+          this._selecting = false; this._selAnchor = null;
+        }
+      try { document.removeEventListener('pointermove', this._docSelectMove, { capture: true }); } catch {}
+      try { document.removeEventListener('pointerup',   this._docSelectUp,   { capture: true }); } catch {}
+      try { this.canvas.releasePointerCapture?.(e.pointerId); } catch {}
+      layoutTextAndGrow(this._active, this.camera, this._ctx, this._blinkOn); scheduleRender();
+      } catch (err) { /* ignore fallback errors */ }
+  }
+
   _selectedText(){
     const s = this._active; if (!s) return '';
     let text = String(s.text || '');
@@ -773,7 +820,7 @@ export class TextTool {
   }
 
   // ---- keyboard ----
-  _handleKeyDown(e){
+  async _handleKeyDown(e){
     // Only respond when Text tool is active
     if (this.state?.tool !== 'text') return;
     const tgt = e.target;
@@ -784,6 +831,7 @@ export class TextTool {
       (tgt && (tgt.tagName === 'INPUT' || tgt.tagName === 'TEXTAREA' || tgt.isContentEditable)) ||
       (ae  && (ae.tagName  === 'INPUT' || ae.tagName  === 'TEXTAREA' || ae.isContentEditable));
     if (inUi) return;
+
     // Allow global shortcuts except edit-critical keys below
     if (e.key === 'Delete'){
       if (this._active){
@@ -800,14 +848,29 @@ export class TextTool {
     if (!this._active) return;
 
     if (e.metaKey || e.ctrlKey){
-      const k = e.key.toLowerCase();
+      const k = (e.key || '').toLowerCase();
       if (k === 'a'){ e.preventDefault(); const s=this._active; const L=(s.text||'').length; s.selStart=0; s.selEnd=L; s.caret=L; layoutTextAndGrow(s,this.camera,this._ctx,this._blinkOn); scheduleRender(); return; }
-      // Let native copy/cut events handle clipboard
-      if (k === 'c'){ return; }
-      if (k === 'x'){ return; }
+      if (k === 'c'){
+        e.preventDefault(); try { await this._copyEdit(); } catch {}
+        return;
+      }
+      if (k === 'x'){
+        e.preventDefault(); try { await this._copyEdit(); } catch {}
+        try { this._pushEditSnapshot(); this._deleteSelectionIfAny() ?? (this._active.text = ''); layoutTextAndGrow(this._active,this.camera,this._ctx,this._blinkOn); markDirty(); scheduleRender(); } catch {}
+        return;
+      }
+      if (k === 'v'){
+        e.preventDefault();
+        try {
+          let raw = '';
+          try { raw = (e.clipboardData || window.clipboardData)?.getData?.('text') || ''; } catch {}
+          if (!raw && navigator?.clipboard?.readText) raw = await navigator.clipboard.readText();
+          if (raw) { const MAX = 10000; const txt = String(raw).replace(/\r/g,'').slice(0, MAX); this._insertAtCaret(txt); }
+        } catch {}
+        return;
+      }
       if (k === 'z'){ e.preventDefault(); e.stopPropagation(); if (e.shiftKey) this._redoEdit(); else this._undoEdit(); return; }
       if (k === 'y'){ e.preventDefault(); e.stopPropagation(); this._redoEdit(); return; }
-      // Let Ctrl/Cmd+V fall through to paste handler
       return;
     }
 
@@ -910,6 +973,7 @@ export class TextTool {
     if (this._active){
       const s = this._active;
       const h = hitHandleRotAware(world, s, this.camera);
+  // active text hit check
       if (h === 'rot'){
         this._mode = 'rotate';
         this._handle = 'rot';
@@ -944,31 +1008,22 @@ export class TextTool {
         // inside? set caret or start move depending on hit (rot-aware)
         const bb = bboxOf(s);
         const c  = { x:(bb.minx+bb.maxx)/2, y:(bb.miny+bb.maxy)/2 };
-        const lp = invRotateAround(world, c, s.rotation||0);
-        if (pointInRect(lp, bb)){
-          if (e.altKey || e.metaKey) {
-            // Move the text box when Alt/Meta is held
-            this._mode = 'move';
-            this._handle = null;
-            this._before = snapshotGeometry(s);
-            this._half = { x:(bb.maxx-bb.minx)/2, y:(bb.maxy-bb.miny)/2 };
-            this._grabLocalFromCenter = { x: lp.x - c.x, y: lp.y - c.y };
-            try { this.canvas.setPointerCapture(e.pointerId); } catch {}
-            this._setCursor('move');
-            return;
-          } else {
-            // selection drag instead of box move
-            const idx = this._caretIndexFromPoint(world);
-            s.caret = idx;
-            if (e.shiftKey){
-              const anchor = Number.isFinite(s.selStart)&&Number.isFinite(s.selEnd)&&s.selStart!==s.selEnd ? (s.selStart===s.caret? s.selEnd : s.selStart) : (s.selStart ?? idx);
-              s.selStart = Math.min(anchor, idx); s.selEnd = Math.max(anchor, idx);
-            } else { s.selStart = s.selEnd = idx; }
-            this._selecting = true; this._selAnchor = s.selStart;
-            try { this.canvas.setPointerCapture(e.pointerId); } catch {}
-            layoutTextAndGrow(s, this.camera, this._ctx, this._blinkOn); scheduleRender();
-            return;
-          }
+  const lp = invRotateAround(world, c, s.rotation||0);
+  const isInside = pointInRect(lp, bb);
+  if (isInside){
+          // Always start caret/selection when clicking inside the text box.
+          const idx = this._caretIndexFromPoint(world);
+          s.caret = idx;
+          if (e.shiftKey){
+            const anchor = Number.isFinite(s.selStart) && Number.isFinite(s.selEnd) && s.selStart !== s.selEnd
+              ? (s.selStart === s.caret ? s.selEnd : s.selStart)
+              : (s.selStart ?? idx);
+            s.selStart = Math.min(anchor, idx); s.selEnd = Math.max(anchor, idx);
+          } else { s.selStart = s.selEnd = idx; }
+          this._selecting = true; this._selAnchor = s.selStart;
+          try { this.canvas.setPointerCapture(e.pointerId); } catch {}
+          layoutTextAndGrow(s, this.camera, this._ctx, this._blinkOn); scheduleRender();
+          return;
         }
         // clicked elsewhere: try hitting any text handles before finishing
         {
@@ -1015,12 +1070,13 @@ export class TextTool {
     }
 
     // --- Not active yet: first try inside-rect hit ---
-    const hitText = topTextAt(this.state, world);
+  const hitText = topTextAt(this.state, world);
     if (hitText){
       this._beginEditing(hitText);
 
       // Try handles immediately on the same click
-      const h = hitHandleRotAware(world, hitText, this.camera);
+  const h = hitHandleRotAware(world, hitText, this.camera);
+  // hitText handle check
       if (h === 'rot'){
         this._mode = 'rotate';
         this._handle = 'rot';
@@ -1050,31 +1106,19 @@ export class TextTool {
         return;
       }
 
-      // Inside text (no handle): hold Alt/Meta to move, otherwise begin selection drag
-      const bb2 = bboxOf(hitText);
-      const c2  = { x:(bb2.minx+bb2.maxx)/2, y:(bb2.miny+bb2.maxy)/2 };
-      const lp2 = invRotateAround(world, c2, hitText.rotation||0);
-      if (e.altKey || e.metaKey) {
-        this._mode = 'move';
-        this._handle = null;
-        this._before = snapshotGeometry(hitText);
-        this._half = { x:(bb2.maxx-bb2.minx)/2, y:(bb2.maxy-bb2.miny)/2 };
-        this._grabLocalFromCenter = { x: lp2.x - c2.x, y: lp2.y - c2.y };
-        try { this.canvas.setPointerCapture(e.pointerId); } catch {}
-        this._setCursor('move');
-        return;
-      } else {
-        const idx = this._caretIndexFromPoint(world);
-        hitText.caret = idx;
-        if (e.shiftKey){
-          const anchor = Number.isFinite(hitText.selStart)&&Number.isFinite(hitText.selEnd)&&hitText.selStart!==hitText.selEnd ? (hitText.selStart===hitText.caret? hitText.selEnd : hitText.selStart) : (hitText.selStart ?? idx);
-          hitText.selStart = Math.min(anchor, idx); hitText.selEnd = Math.max(anchor, idx);
-        } else { hitText.selStart = hitText.selEnd = idx; }
-        this._selecting = true; this._selAnchor = hitText.selStart;
-        try { this.canvas.setPointerCapture(e.pointerId); } catch {}
-        layoutTextAndGrow(hitText, this.camera, this._ctx, this._blinkOn); scheduleRender();
-        return;
-      }
+      // Inside text (no handle): begin selection/caret. Do NOT start a move from inside the box.
+      const idx = this._caretIndexFromPoint(world);
+      hitText.caret = idx;
+      if (e.shiftKey) {
+        const anchor = Number.isFinite(hitText.selStart) && Number.isFinite(hitText.selEnd) && hitText.selStart !== hitText.selEnd
+          ? (hitText.selStart === hitText.caret ? hitText.selEnd : hitText.selStart)
+          : (hitText.selStart ?? idx);
+        hitText.selStart = Math.min(anchor, idx); hitText.selEnd = Math.max(anchor, idx);
+      } else { hitText.selStart = hitText.selEnd = idx; }
+      this._selecting = true; this._selAnchor = hitText.selStart;
+      try { this.canvas.setPointerCapture(e.pointerId); } catch {}
+      layoutTextAndGrow(hitText, this.camera, this._ctx, this._blinkOn); scheduleRender();
+      return;
     }
 
     // --- If not inside any rect, scan ALL texts' handles before drafting new ---
@@ -1154,6 +1198,7 @@ export class TextTool {
       s.caret = idx;
       const anchor = Number.isFinite(this._selAnchor) ? this._selAnchor : (s.selStart ?? idx);
       s.selStart = Math.min(anchor, idx); s.selEnd = Math.max(anchor, idx);
+  // selection update
       layoutTextAndGrow(s, this.camera, this._ctx, this._blinkOn); scheduleRender();
       return;
     }

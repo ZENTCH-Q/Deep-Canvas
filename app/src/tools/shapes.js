@@ -53,9 +53,10 @@ class BaseShapeTool {
     this._prevHadSelection = !!(this.state?.selection && this.state.selection.size > 0);
 
     // When starting to draft a new shape, hide any existing selection UI immediately
-    try { this.state.selection?.clear?.(); } catch {}
-    try { this.state._transformActive = false; } catch {}
-    try { this.state._hoverHandle = null; this.state._activeHandle = null; } catch {}
+  try { this.state.selection?.clear?.(); } catch {}
+  try { this.state._transformActive = false; } catch {}
+  try { this.state._hoverHandle = null; this.state._activeHandle = null; } catch {}
+  try { this.state._marquee = null; } catch {}
     setDeferIndex(true);
     this._active = this._newShape(shape, world);
     try { this.canvas.setPointerCapture(e.pointerId); } catch {}
@@ -126,6 +127,7 @@ class BaseShapeTool {
     }
     this._drafting = false; this._active = null;
     this._downWorld = null; this._downScreen = null;
+    try { this.state._marquee = null; } catch {}
     setDeferIndex(false);
     scheduleRender();
   }

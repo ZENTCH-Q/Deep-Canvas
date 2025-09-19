@@ -254,8 +254,10 @@ export class SelectTool {
     if (this.state.selection && this.state.selection.size){
       const bb = selectionBBoxWorld(this.state);
       if (bb){
-        const uiHit = hitSelectionUI(this.downWorld, this.state, this.camera);
-        const h = (uiHit?.type === 'handle') ? uiHit.handle : (uiHit?.type === 'move' ? 'move' : null);
+  const uiHit = hitSelectionUI(this.downWorld, this.state, this.camera);
+  // Only consider explicit handle or explicit move-type hits as a handle click.
+  // Do NOT treat 'inside' as a move handle when pointer-down.
+  const h = (uiHit?.type === 'handle') ? uiHit.handle : (uiHit?.type === 'move' ? 'move' : null);
         if (h === 'rot'){
           this.mode = 'rotate'; this.handle = 'rot'; this.startBBox = bb;
           const cx = (bb.minx + bb.maxx)/2, cy = (bb.miny + bb.maxy)/2;
@@ -265,7 +267,10 @@ export class SelectTool {
           this.mode = 'move'; this.handle = 'move'; this.startBBox = bb;
         } else if (h){
           this.mode = 'scale'; this.handle = h; this.startBBox = bb;
-        } else if (pointInRect(this.downWorld, bb)) {
+        } else if (false && pointInRect(this.downWorld, bb)) {
+          // Previously a click inside the selection bbox without a handle started a
+          // move. We no longer start transform 'move' from an inside click; move
+          // should only begin when the explicit move-handle is clicked.
           this.mode = 'move'; this.startBBox = bb;
         } else {
           this.mode = null;
@@ -306,9 +311,10 @@ export class SelectTool {
     if (!this.downScreen && this.state.selection && this.state.selection.size){
       const bb = selectionBBoxWorld(this.state);
       if (bb){
-        const world = this.camera.screenToWorld(scr);
-        const uiHit = hitSelectionUI(world, this.state, this.camera);
-        const h = (uiHit?.type === 'handle') ? uiHit.handle : (uiHit?.type === 'move' ? 'move' : (pointInRect(world, bb) ? 'move' : null));
+  const world = this.camera.screenToWorld(scr);
+  const uiHit = hitSelectionUI(world, this.state, this.camera);
+  // Only explicit handle or move-type counts as hover. Do not map 'inside' to 'move'.
+  const h = (uiHit?.type === 'handle') ? uiHit.handle : (uiHit?.type === 'move' ? 'move' : null);
         const cursor = h ? (h === 'move' ? 'move' : cursorForHandle(h)) : '';
         this.canvas.style.cursor = cursor;
         const as = h; 

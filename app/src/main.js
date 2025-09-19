@@ -307,6 +307,7 @@ function setTool(name){
   currentTool?.cancel?.();
   currentTool?.destroy?.();
   currentTool = createTool(name, { canvas, ctx, overlay, camera, state });
+  try { state._marquee = null; } catch {}
   scheduleRender();
 }
 
@@ -413,7 +414,10 @@ canvas.addEventListener('pointerdown',  e => {
   try {
     if (state.tool !== 'select' && state.selection?.size) {
       const hit = hitSelectionUI({ x: e.worldX, y: e.worldY }, state, camera);
-      if (hit && (hit.type === 'handle' || hit.type === 'move' || hit.type === 'inside')) {
+      // Route transform interactions to Select tool for handles/move.
+      // Do not route plain 'inside' hits when the Text tool is active so
+      // the TextTool can start caret/selection editing on click.
+      if (hit && (hit.type === 'handle' || hit.type === 'move' || (hit.type === 'inside' && state.tool !== 'text'))) {
         selTool?.onPointerDown?.(e);
         routedToSelect = true;
       }
