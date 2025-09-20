@@ -242,6 +242,17 @@ export function initGalleryView(options = {}) {
     cardById.delete(id);
   }
 
+  function focusCard(id) {
+    const nodes = cardById.get(id);
+    const card = nodes?.card;
+    if (!card) return;
+    try { card.focus({ preventScroll: true }); } catch {}
+    try { card.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); } catch {}
+    // subtle flash to draw the eye
+    card.classList.add('g-flash');
+    setTimeout(() => card.classList.remove('g-flash'), 700);
+  }
+
   function rerender() { render(); }
 
   try { items = (opts.getItems?.() || []).slice(); } catch { items = []; }
@@ -251,7 +262,7 @@ export function initGalleryView(options = {}) {
   document.addEventListener('gallery:new-canvas', onNew);
 
   return {
-    list, add, update, remove, rerender,
+    list, add, update, remove, rerender, focusCard,
     refresh: () => { try { items = (opts.getItems?.() || []).slice(); } catch { items = []; } render(); },
     destroy: () => { document.removeEventListener('gallery:new-canvas', onNew); cardById.clear(); }
   };

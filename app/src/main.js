@@ -100,11 +100,30 @@ function initGalleryFromDocs() {
     onDelete(id) {
       deleteDoc(id);
     },
-    onDuplicate(id) {
+    async onDuplicate(id) {
       try {
+        const src = getDoc(id);
         const created = createDoc({ duplicateOf: id });
         const doc = (typeof created === 'string') ? getDoc(created) : created;
-        if (doc) { galleryCtl?.add(docToItem(doc)); openDoc(doc); }
+        if (!doc) return;
+
+        // Ensure the duplicate carries over visual metadata used by the gallery
+        doc.data = doc.data || {};
+        if (src?.data?.size && !doc.data.size) {
+          doc.data.size = { w: +src.data.size.w || 1600, h: +src.data.size.h || 1000 };
+        }
+        if (src?.data?.background && !doc.data.background) {
+          doc.data.background = { ...src.data.background };
+        }
+        if (!doc.camera && src?.camera) doc.camera = { ...src.camera };
+        if (!doc.createdCamera && src?.createdCamera) doc.createdCamera = { ...src.createdCamera };
+        if (!doc.thumb && src?.thumb) doc.thumb = src.thumb; // reuse source thumbnail
+
+        // Persist so the gallery reads correct size/thumb on refresh
+        await saveDocFull(doc);
+
+        galleryCtl?.add(docToItem(doc));
+        galleryCtl?.focusCard?.(doc.id); // optional nicety
       } catch {}
     },
     onCreateNew(detail) {
