@@ -179,7 +179,7 @@ function initColorUI(state){
   window.addEventListener('drag', onAnyDragMove, { passive:true, capture:true });
   document.addEventListener('drag', onAnyDragMove, { passive:true, capture:true });
   document.addEventListener('drop', ()=>{ hideDragBall(); }, { capture:true });
-  window.addEventListener('dragend', ()=>{ hideDragBall(); }, { passive:true });
+  window.addEventListener('dragend', ()=>{ hideDragBall(); try{ window._dragPaint=null; }catch{} }, { passive:true });
   window.addEventListener('keydown', (e)=>{ if (e.key==='Escape'){ hideDragBall(); } }, { passive:true });
 
   // --- Drag-to-paint wiring: start a color drag from swatches or chip ---
@@ -224,17 +224,10 @@ function initColorUI(state){
       e.stopPropagation(); startColorDrag(e, t.dataset.hex || current);
     }
   });
-  // Enable drag on the color chip button
   if (colorBtn){
     try { colorBtn.setAttribute('draggable','true'); } catch {}
     colorBtn.addEventListener('dragstart', (e)=>{ e.stopPropagation(); startColorDrag(e, state.settings?.color || current); });
   }
-  // Enable drag from the color panel body (except interactive inputs)
-  // Disable drag-to-paint from the entire color panel to avoid conflicts
-  // with sliders and scrollbars. Drag remains enabled for swatches and the dock chip.
-  // if (colorPanel){ /* intentionally not draggable */ }
-  // Clear payload when drag ends anywhere
-  window.addEventListener('dragend', ()=>{ try{ window._dragPaint=null; }catch{} });
 
   function setColor(hex, { push=true }={}){
     const h=toHex6(hex); if (!h) return;
@@ -496,7 +489,6 @@ function materializeFromClipboard(data, state){
 }
 
 function mountGalleryPlusCard(state) {
-  // Prefer the last FAB in DOM order in case of duplicate IDs in markup
   const all = Array.from(document.querySelectorAll('#newCanvasFAB'));
   const btn = all.length ? all[all.length - 1] : null;
   if (!btn || btn._wired) return;
@@ -604,13 +596,10 @@ function mountGalleryPlusCard(state) {
   pane.querySelector('#ncCreate')?.addEventListener('click', submit);
   pane.addEventListener('keydown', (e)=>{ if (e.key==='Enter') { e.preventDefault(); submit(); } if (e.key==='Escape'){ e.preventDefault(); closeModal(); } });
 
-  // If you want the full modal instead, swap the click handler to openModal()
 }
 
 export function initUI({ state, canvas, camera, setTool }){
   document.querySelectorAll('[data-tool]').forEach(b=> b.addEventListener('click', ()=> setTool(b.dataset.tool)));
-
-  // quickBrush removed; single brush is always pen
 
   // Sliders for size + opacity live in color panel now
   initSizeOpacitySliders(state);
@@ -782,6 +771,13 @@ export function initUI({ state, canvas, camera, setTool }){
   const animRotAmt = document.getElementById('animRotAmt');
   const animPosAmt = document.getElementById('animPosAmt');
 
+  const styleType   = document.getElementById('styleType');
+  const styleSpeed  = document.getElementById('styleSpeed');
+  const styleAmount = document.getElementById('styleAmount');
+  const styleHue    = document.getElementById('styleHue');
+  const styleRate   = document.getElementById('styleRate');
+
+
   animType?.addEventListener('change', () => {
     const t = animType.value;
     const pv = selectionCenter();
@@ -888,53 +884,41 @@ export function initUI({ state, canvas, camera, setTool }){
     updateAnimFromSel(); updateStyleFromSel();
   }
 
-const _animStash = new Map(); // key: stroke object, value: deep copy of layer 0
-let _wasTransforming = false;
+  const _animStash = new Map(); // key: stroke object, value: deep copy of layer 0
+  let _wasTransforming = false;
+  const cloneLayer = (L) => (L ? JSON.parse(JSON.stringify(L)) : null);
 
-function cloneLayer(L){ return L ? JSON.parse(JSON.stringify(L)) : null; }
-function ensureAnimLayer(s) {
-  s.react2 = s.react2 || {};
-  const anim = s.react2.anim || (s.react2.anim = { layers: [] });
-  let L = anim.layers[0];
-  if (!L) anim.layers[0] = L = { enabled: true, type: 'none', speed: 1 };
-  return L;
-}
-function selectionCenter(){
-  const bb = selectionBBoxWorld();
-  return bb ? { x:(bb.minx+bb.maxx)/2, y:(bb.miny+bb.maxy)/2 } : null;
-}
-
-subscribe(() => {
-  const transforming = !!state._transformActive;
-  if (transforming && !_wasTransforming) {
-    _animStash.clear();
-    const sel = Array.from(state.selection || []);
-    for (const s of sel) {
-      const L = getAnimLayer(s);
-      _animStash.set(s, cloneLayer(L));       
-      if (L) { L.enabled = false; L.type = 'none'; }
-    }
-    scheduleRender(); 
-  }
-
-  if (!transforming && _wasTransforming) {
-    const center = selectionCenter(); 
-    for (const [s, snapshot] of _animStash) {
-      if (!snapshot) continue;      
-      const L = ensureAnimLayer(s);
-      Object.assign(L, snapshot);         
-      L.enabled = snapshot.type && snapshot.type !== 'none';
-      if (center && (snapshot.pivot || snapshot.groupId)) {
-        L.pivot = { x: center.x, y: center.y };
+  subscribe(() => {
+    const transforming = !!state._transformActive;
+    if (transforming && !_wasTransforming) {
+      _animStash.clear();
+      const sel = Array.from(state.selection || []);
+      for (const s of sel) {
+        const L = getAnimLayer(s);
+        _animStash.set(s, cloneLayer(L));
+        if (L) { L.enabled = false; L.type = 'none'; }
       }
+      scheduleRender();
     }
-    _animStash.clear();
-    markDirty();
-    scheduleRender();
-  }
 
-  _wasTransforming = transforming;
-});
+    if (!transforming && _wasTransforming) {
+      const center = selectionCenter();
+      for (const [s, snapshot] of _animStash) {
+        if (!snapshot) continue;
+        const L = ensureAnimLayer(s);
+        Object.assign(L, snapshot);
+        L.enabled = snapshot.type && snapshot.type !== 'none';
+        if (center && (snapshot.pivot || snapshot.groupId)) {
+          L.pivot = { x: center.x, y: center.y };
+        }
+      }
+      _animStash.clear();
+      markDirty();
+      scheduleRender();
+    }
+
+    _wasTransforming = transforming;
+  });
 
   subscribe(updateHud); window.addEventListener('resize', updateHud); setTimeout(updateHud,0);
 
