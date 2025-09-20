@@ -9,6 +9,72 @@ const STRIDE = 3;
 
 const clamp01 = v => v < 0 ? 0 : (v > 1 ? 1 : v);
 
+const EPS = 1e-8;
+const pxWorldUnit = (camera, dpr=1) => 1 / Math.max(EPS, dpr * camera.scale);
+function resetCtxState(ctx){
+  try { ctx.lineDashOffset = 0; } catch {}
+  ctx.setLineDash([]);
+  ctx.shadowBlur = 0;
+  ctx.filter = 'none';
+  ctx.globalAlpha = 1;
+  ctx.globalCompositeOperation = 'source-over';
+}
+function simplifyTol(camera, state, ctx, fast, tolLive=null){
+  const disableAt = state?._perf?.simplifyDisableAtScale ?? 1.25;
+  if (camera.scale >= disableAt) return 0;
+  const cap  = Math.max(0.5, ctx.lineWidth) * 0.6;
+  const base = tolLive ?? tolWorld(camera, fast);
+  return Math.min(base, cap);
+}
+function drawCircleHandle(ctx, x, y, r, theme, isHover, px){
+  const prevFill = ctx.fillStyle, prevStroke = ctx.strokeStyle, prevLW = ctx.lineWidth;
+  if (isHover) {
+    ctx.fillStyle   = theme.handleHoverFill   || '#3a7afe';
+    ctx.strokeStyle = theme.handleHoverStroke || '#dce6ff';
+    ctx.lineWidth   = Math.max(px*1.25, 1.5*px);
+  }
+  ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  if (isHover) { ctx.fillStyle = prevFill; ctx.strokeStyle = prevStroke; ctx.lineWidth = prevLW; }
+}
+function drawRotationGizmo(ctx, cx, yTop, r, theme, px){
+  ctx.beginPath(); ctx.moveTo(cx, yTop.start); ctx.lineTo(cx, yTop.knob); ctx.stroke();
+  drawCircleHandle(ctx, cx, yTop.knob, r, theme, false, px);
+  try {
+    ctx.save();
+    ctx.lineWidth   = Math.max(ctx.lineWidth * 0.9, 0.8 * px);
+    ctx.strokeStyle = theme.rotateArrow || '#e6eaf0';
+    const ar = r * 0.7;
+    ctx.beginPath(); ctx.arc(cx, yTop.knob, ar, Math.PI * 0.15, Math.PI * 1.3); ctx.stroke();
+    ctx.restore();
+  } catch {}
+}
+function drawMoveHandle45(ctx, xRight, yTop, r, theme, px, rotOffsetPx, isHover){
+  const diag = (rotOffsetPx * px) / Math.SQRT2;
+  drawCircleHandle(ctx, xRight + diag, yTop - diag, r, theme, isHover, px);
+}
+function drawSizeLabel(ctx, camera, bb, canvasLike, theme, dpr){
+  const w = bb.maxx - bb.minx, h = bb.maxy - bb.miny;
+  const wPx = Math.max(0, Math.round(w * camera.scale));
+  const hPx = Math.max(0, Math.round(h * camera.scale));
+  const label = `${wPx} × ${hPx}px`;
+  const sp = camera.worldToScreen({ x: bb.maxx, y: bb.maxy });
+  ctx.setTransform(1,0,0,1,0,0);
+  const pad = 6 * dpr;
+  ctx.font = `${12 * dpr}px system-ui,-apple-system,Segoe UI,Roboto,sans-serif`;
+  const metrics = ctx.measureText(label);
+  const lw2 = Math.ceil(metrics.width + pad * 2);
+  const lh  = Math.ceil(18 * dpr);
+  const cw  = Math.floor(canvasLike.clientWidth * dpr);
+  const ch  = Math.floor(canvasLike.clientHeight * dpr);
+  const lx  = Math.min(cw - lw2 - 4 * dpr, Math.max(4 * dpr, sp.x * dpr - lw2));
+  const ly  = Math.min(ch - lh  - 4 * dpr, Math.max(4 * dpr, sp.y * dpr + 8 * dpr));
+  ctx.fillStyle = theme.labelBg; ctx.fillRect(lx, ly, lw2, lh);
+  ctx.strokeStyle = theme.labelStroke; ctx.lineWidth = 1;
+  ctx.strokeRect(lx + 0.5, ly + 0.5, lw2 - 1, lh - 1);
+  ctx.fillStyle = theme.labelText; ctx.fillText(label, lx + pad, ly + lh - 5 * dpr);
+  ctx.setTransform(dpr * camera.scale, 0, 0, dpr * camera.scale, dpr * camera.tx, dpr * camera.ty);
+}
+
 function tolWorld(camera, fast = false){
   const base = 0.75 / Math.max(1e-8, camera.scale);
   return fast ? base * 1.6 : base;
@@ -724,139 +790,20 @@ function drawSelectionHandlesRotatedText(ctx, s, camera, theme, dpr) {
   const bb = s.bbox;
   const x0 = bb.minx, y0 = bb.miny, x1 = bb.maxx, y1 = bb.maxy;
   const cx = (x0 + x1) * 0.5, cy = (y0 + y1) * 0.5;
-
-  const px = 1 / Math.max(1e-8, dpr * camera.scale);
-  let HANDLE_RADIUS_PX = 5;     
-  const ROT_OFFSET_PX    = 28;   
-  const LEADER_GAP_PX    = 10;       
-
-  const r  = HANDLE_RADIUS_PX * px;           // handle radius in world units
-  const lw = Math.max(px, 0.75 * px);         // stroke width in world units
-
-  const w = x1 - x0, h = y1 - y0;
-  const lx = -w / 2, ly = -h / 2;
-  const rx =  w / 2, by =  h / 2;
-
-  ctx.save();
-  ctx.translate(cx, cy);
-  if (s.rotation) ctx.rotate(s.rotation);
-
-  // selection rect (rotated)
-  ctx.save();
-  ctx.lineWidth   = lw;
-  ctx.strokeStyle = theme.selStroke;
-  ctx.fillStyle   = theme.selFill;
-  ctx.beginPath();
-  ctx.rect(lx, ly, w, h);
-  ctx.fill();
-  ctx.stroke();
-  ctx.restore();
-
-  // handles (8) with hover highlight
-  const handlePoints = [
-    ['nw', lx, ly], ['n', 0,  ly], ['ne', rx, ly],
-    ['e',  rx, 0],               ['se', rx, by],
-    ['s',  0,  by], ['sw', lx, by], ['w',  lx, 0]
-  ];
-  for (const [key, x, y] of handlePoints) {
-    const isHover = s && s._hoverHandle === key;
-    ctx.beginPath();
-    const prevFill = ctx.fillStyle, prevStroke = ctx.strokeStyle, prevLW = ctx.lineWidth;
-    if (isHover) {
-      ctx.fillStyle = theme.handleHoverFill || '#3a7afe';
-      ctx.strokeStyle = theme.handleHoverStroke || '#dce6ff';
-      ctx.lineWidth = Math.max(px*1.25, 1.5*px);
-    } else {
-      ctx.strokeStyle = theme.handleStroke;
-      ctx.fillStyle   = theme.handleFill;
-      ctx.lineWidth   = lw;
-    }
-    ctx.arc(x, y, r, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
-    if (isHover) { ctx.fillStyle = prevFill; ctx.strokeStyle = prevStroke; ctx.lineWidth = prevLW; }
+  const px = pxWorldUnit(camera, dpr);
+  let HANDLE_RADIUS_PX = 5, ROT_OFFSET_PX = 28, LEADER_GAP_PX = 10;
+  const r  = HANDLE_RADIUS_PX * px, lw = Math.max(px, 0.75 * px);
+  const w = x1 - x0, h = y1 - y0, lx = -w / 2, ly = -h / 2, rx =  w / 2, by =  h / 2;
+  ctx.save(); ctx.translate(cx, cy); if (s.rotation) ctx.rotate(s.rotation);
+  ctx.save(); ctx.lineWidth = lw; ctx.strokeStyle = theme.selStroke; ctx.fillStyle = theme.selFill;
+  ctx.beginPath(); ctx.rect(lx, ly, w, h); ctx.fill(); ctx.stroke(); ctx.restore();
+  ctx.lineWidth = lw; ctx.strokeStyle = theme.handleStroke || '#b6c2cf'; ctx.fillStyle = theme.handleFill || 'rgba(17,20,24,0.85)';
+  for (const [key,x,y] of [['nw',lx,ly],['n',0,ly],['ne',rx,ly],['e',rx,0],['se',rx,by],['s',0,by],['sw',lx,by],['w',lx,0]]) {
+    drawCircleHandle(ctx, x, y, r, theme, s && s._hoverHandle === key, px);
   }
-
-  // rotation handle + leader
-  const rotY       = ly - ROT_OFFSET_PX * px;
-  const leaderFrom = ly - LEADER_GAP_PX * px;
-
-  ctx.beginPath();
-  ctx.moveTo(0, leaderFrom);
-  ctx.lineTo(0, rotY);
-  ctx.stroke();
-
-  {
-    const isHover = s && s._hoverHandle === 'rot';
-    const prevFill = ctx.fillStyle, prevStroke = ctx.strokeStyle, prevLW = ctx.lineWidth;
-    if (isHover) {
-      ctx.fillStyle = theme.handleHoverFill || '#3a7afe';
-      ctx.strokeStyle = theme.handleHoverStroke || '#dce6ff';
-      ctx.lineWidth = Math.max(px*1.25, 1.5*px);
-    }
-    ctx.beginPath();
-    ctx.arc(0, rotY, r, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
-    if (isHover) { ctx.fillStyle = prevFill; ctx.strokeStyle = prevStroke; ctx.lineWidth = prevLW; }
-  }
-
-  
-
-  // arrow accent
-  try {
-    ctx.save();
-    ctx.lineWidth = Math.max(lw * 0.9, 0.8 * px);
-    ctx.strokeStyle = theme.rotateArrow || '#e6eaf0';
-    const ar = r * 0.7;
-    ctx.beginPath();
-    ctx.arc(0, rotY, ar, Math.PI * 0.15, Math.PI * 1.3);
-    ctx.stroke();
-    ctx.restore();
-  } catch {}
-
-  // move handle at 45° from top-right corner for non-text shapes
-  if (s && s.kind === 'shape' && s.shape !== 'text') {
-    try {
-      ctx.beginPath();
-      const diag = (ROT_OFFSET_PX * px) / Math.SQRT2;
-      const mvx = rx + diag;
-      const mvy = ly - diag;
-      const isHover = s && s._hoverHandle === 'move';
-      const prevFill = ctx.fillStyle, prevStroke = ctx.strokeStyle, prevLW = ctx.lineWidth;
-      if (isHover) {
-        ctx.fillStyle = theme.handleHoverFill || '#3a7afe';
-        ctx.strokeStyle = theme.handleHoverStroke || '#dce6ff';
-        ctx.lineWidth = Math.max(px*1.25, 1.5*px);
-      }
-      ctx.arc(mvx, mvy, r, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.stroke();
-      if (isHover) { ctx.fillStyle = prevFill; ctx.strokeStyle = prevStroke; ctx.lineWidth = prevLW; }
-    } catch {}
-  }
-
-  // move handle at 45� from top-right corner (text only)
-  if (s && s.shape === 'text') {
-    try {
-      ctx.beginPath();
-      const diag = (ROT_OFFSET_PX * px) / Math.SQRT2;
-      const mvx = rx + diag;
-      const mvy = ly - diag;
-      const isHover = s && s._hoverHandle === 'move';
-      const prevFill = ctx.fillStyle, prevStroke = ctx.strokeStyle, prevLW = ctx.lineWidth;
-      if (isHover) {
-        ctx.fillStyle = theme.handleHoverFill || '#3a7afe';
-        ctx.strokeStyle = theme.handleHoverStroke || '#dce6ff';
-        ctx.lineWidth = Math.max(px*1.25, 1.5*px);
-      }
-      ctx.arc(mvx, mvy, r, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.stroke();
-      if (isHover) { ctx.fillStyle = prevFill; ctx.strokeStyle = prevStroke; ctx.lineWidth = prevLW; }
-    } catch {}
-  }
-
+  const rotY = { start: ly - LEADER_GAP_PX * px, knob: ly - ROT_OFFSET_PX * px };
+  drawRotationGizmo(ctx, 0, rotY, r, theme, px);
+  if (s && s.shape) drawMoveHandle45(ctx, rx, ly, r, theme, px, ROT_OFFSET_PX, s && s._hoverHandle === 'move');
   ctx.restore();
 }
 
@@ -1070,100 +1017,24 @@ function getLODView(stroke, camera, fast, state) {
 function drawSelectionHandles(ctx, bb, camera, theme, dpr, hoverKey = null, showMove = false, showMoveIsPath = false) {
   const x0 = bb.minx, y0 = bb.miny, x1 = bb.maxx, y1 = bb.maxy;
   const cx = (x0 + x1) * 0.5;
-  const px = 1 / Math.max(1e-8, dpr * camera.scale);
-  let HANDLE_RADIUS_PX = 5;     
-  let ROT_OFFSET_PX    = 28;   
-  const LEADER_GAP_PX    = 10;       
-
-  // Dynamic pixel radius: larger when zoomed out
-  const grow = (camera.scale < 1) ? Math.min(2.0, 1 + (1 - camera.scale) * 0.75) : 1;
-  HANDLE_RADIUS_PX *= grow;
-  const r   = HANDLE_RADIUS_PX * px;
-  const lw  = Math.max(px, 0.75 * px);
-
-  // 8 resize handles (with keys)
-  const points = [
-    ['nw', x0, y0], ['n',  cx, y0], ['ne', x1, y0],
-    ['e',  x1, (y0+y1)/2], ['se', x1, y1],
-    ['s',  cx, y1], ['sw', x0, y1], ['w',  x0, (y0+y1)/2]
-  ];
-
+  const px = pxWorldUnit(camera, dpr);
+  let HANDLE_RADIUS_PX = 5, ROT_OFFSET_PX = 28, LEADER_GAP_PX = 10;
+  if (camera.scale < 1) HANDLE_RADIUS_PX *= Math.min(2.0, 1 + (1 - camera.scale) * 0.75);
+  const r = HANDLE_RADIUS_PX * px, lw = Math.max(px, 0.75 * px);
   ctx.save();
-  ctx.lineWidth   = lw;
+  ctx.lineWidth = lw;
   ctx.strokeStyle = theme.handleStroke || '#b6c2cf';
   ctx.fillStyle   = theme.handleFill   || 'rgba(17,20,24,0.85)';
-
-  for (const [key,x,y] of points) {
-    ctx.beginPath();
-    const isHover = !!hoverKey && hoverKey === key;
-    const prevFill = ctx.fillStyle, prevStroke = ctx.strokeStyle, prevLW = ctx.lineWidth;
-    if (isHover) {
-      ctx.fillStyle = theme.handleHoverFill || '#3a7afe';
-      ctx.strokeStyle = theme.handleHoverStroke || '#dce6ff';
-      ctx.lineWidth = Math.max(px*1.25, 1.5*px);
-    }
-    ctx.arc(x, y, r, 0, Math.PI*2);
-    ctx.fill();
-    ctx.stroke();
-    if (isHover) { ctx.fillStyle = prevFill; ctx.strokeStyle = prevStroke; ctx.lineWidth = prevLW; }
+  for (const [key,x,y] of [['nw',x0,y0],['n',cx,y0],['ne',x1,y0],['e',x1,(y0+y1)/2],['se',x1,y1],['s',cx,y1],['sw',x0,y1],['w',x0,(y0+y1)/2]]) {
+    drawCircleHandle(ctx, x, y, r, theme, hoverKey === key, px);
   }
-
-  // move handle at 45� from top-right corner
   if (showMove) {
-  try {
-    ctx.beginPath();
-    // If the move-handle is being shown for a freehand 'path' stroke, nudge
-    // the rotation/move offset outwards a bit so the handle is easier to see.
-    if (showMoveIsPath) ROT_OFFSET_PX = Math.round(ROT_OFFSET_PX * 1.4);
-    const diag = (ROT_OFFSET_PX * px) / Math.SQRT2;
-    const mvx = x1 + diag;
-    const mvy = y0 - diag;
-    const isHover = !!hoverKey && hoverKey === 'move';
-    const prevFill = ctx.fillStyle, prevStroke = ctx.strokeStyle, prevLW = ctx.lineWidth;
-    if (isHover) {
-      ctx.fillStyle = theme.handleHoverFill || '#3a7afe';
-      ctx.strokeStyle = theme.handleHoverStroke || '#dce6ff';
-      ctx.lineWidth = Math.max(px*1.25, 1.5*px);
-    }
-    ctx.arc(mvx, mvy, r, 0, Math.PI*2);
-    ctx.fill();
-    ctx.stroke();
-    if (isHover) { ctx.fillStyle = prevFill; ctx.strokeStyle = prevStroke; ctx.lineWidth = prevLW; }
-  } catch {}
+    const ro = showMoveIsPath ? Math.round(ROT_OFFSET_PX * 1.4) : ROT_OFFSET_PX;
+    drawMoveHandle45(ctx, x1, y0, r, theme, px, ro, hoverKey === 'move');
   }
-  // rotation handle + leader (axis-aligned)
-  const rotY = y0 - ROT_OFFSET_PX * px;
-  const leadStartY = y0 - LEADER_GAP_PX * px;
-  ctx.beginPath();
-  ctx.moveTo(cx, leadStartY);
-  ctx.lineTo(cx, rotY);
-  ctx.stroke();
-  {
-    const isHover = !!hoverKey && hoverKey === 'rot';
-    const prevFill = ctx.fillStyle, prevStroke = ctx.strokeStyle, prevLW = ctx.lineWidth;
-    if (isHover) {
-      ctx.fillStyle = theme.handleHoverFill || '#3a7afe';
-      ctx.strokeStyle = theme.handleHoverStroke || '#dce6ff';
-      ctx.lineWidth = Math.max(px*1.25, 1.5*px);
-    }
-    ctx.beginPath();
-    ctx.arc(cx, rotY, r, 0, Math.PI*2);
-    ctx.fill();
-    ctx.stroke();
-    if (isHover) { ctx.fillStyle = prevFill; ctx.strokeStyle = prevStroke; ctx.lineWidth = prevLW; }
-  }
-
-  try {
-    ctx.save();
-    ctx.lineWidth = Math.max(lw * 0.9, 0.8 * px);
-    ctx.strokeStyle = theme.rotateArrow || '#e6eaf0';
-    const ar = r * 0.7;
-    ctx.beginPath();
-    ctx.arc(cx, rotY, ar, Math.PI*0.15, Math.PI*1.3);
-    ctx.stroke();
-    ctx.restore();
-  } catch {}
-
+  const rotY = { start: y0 - LEADER_GAP_PX * px, knob: y0 - ROT_OFFSET_PX * px };
+  drawRotationGizmo(ctx, cx, rotY, r, theme, px);
+  if (hoverKey === 'rot') drawCircleHandle(ctx, cx, rotY.knob, r, theme, true, px);
   ctx.restore();
 }
 
@@ -1388,10 +1259,7 @@ export function render(state, camera, ctx, canvasLike, opts = {}) {
         if (viewTA.usedLOD) {
           ctx.beginPath();
           ctx.moveTo(pts[0], pts[1]);
-          // Disable simplification at high zoom-in to avoid snappy look
-          const simplify = camera.scale < (state?._perf?.simplifyDisableAtScale ?? 1.25);
-          const tolCap = Math.max(0.5, ctx.lineWidth) * 0.6;
-          const tol = simplify ? Math.min(tolLive ?? tolWorld(camera, fast), tolCap) : 0;
+          const tol = simplifyTol(camera, state, ctx, fast, tolLive);
           drawPolylineFastWorldTA(ctx, pts, n, camera, 0, (n / STRIDE) - 1, fast, tol);
         } else {
           const viewInStrokeSpace = unbaked ? invXformBBox(view, bake.s, bake.tx, bake.ty) : view;
@@ -1405,16 +1273,12 @@ export function render(state, camera, ctx, canvasLike, opts = {}) {
           if (!vr) {
             s._chunks = null;
             ctx.moveTo(pts[0], pts[1]);
-            const simplify = camera.scale < (state?._perf?.simplifyDisableAtScale ?? 1.25);
-            const tolCap = Math.max(0.5, ctx.lineWidth) * 0.6;
-            const tol = simplify ? Math.min(tolWorld(camera, fast), tolCap) : 0;
+            const tol = simplifyTol(camera, state, ctx, fast);
             drawPolylineFastWorldTA(ctx, pts, n, camera, 0, (n / STRIDE) - 1, fast, tol);
           } else {
             const off = vr.i0 * STRIDE;
             ctx.moveTo(pts[off], pts[off + 1]);
-            const simplify = camera.scale < (state?._perf?.simplifyDisableAtScale ?? 1.25);
-            const tolCap = Math.max(0.5, ctx.lineWidth) * 0.6;
-            const tol = simplify ? Math.min(tolWorld(camera, fast), tolCap) : 0;
+            const tol = simplifyTol(camera, state, ctx, fast);
             drawPolylineFastWorldTA(ctx, pts, n, camera, vr.i0, vr.i1, fast, tol);
           }
         }
@@ -1443,9 +1307,7 @@ export function render(state, camera, ctx, canvasLike, opts = {}) {
         if (pts.length < 2) { if (animApplied) ctx.restore(); if (unbaked) ctx.restore(); continue; }
         ctx.beginPath();
         ctx.moveTo(pts[0].x, pts[0].y);
-        // Disable simplification at high zoom-in to avoid snappy look
-        const simplify = camera.scale < (state?._perf?.simplifyDisableAtScale ?? 1.25);
-        const tw = simplify ? Math.min(tolWorld(camera, fast), Math.max(0.5, ctx.lineWidth) * 0.6) : 0;
+        const tw = simplifyTol(camera, state, ctx, fast);
         let lx = pts[0].x, ly = pts[0].y;
         for (let k = 1; k < pts.length; k++) {
           const p = pts[k], dx = p.x - lx, dy = p.y - ly;
@@ -1484,8 +1346,7 @@ export function render(state, camera, ctx, canvasLike, opts = {}) {
 
     if (animApplied) ctx.restore();
     if (unbaked) ctx.restore();
-    try { ctx.lineDashOffset = 0; } catch {}
-    ctx.setLineDash([]); ctx.shadowBlur = 0; ctx.filter = 'none'; ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
+    resetCtxState(ctx);
   }
 
 if (state.selection && state.selection.size) {
@@ -1509,37 +1370,7 @@ if (state.selection && state.selection.size) {
     // Rotated text: draw rotated selection box + handles
     if (only && (only.shape === 'text' || only.shape === 'image') && Math.abs(only.rotation || 0) > 1e-6) {
       drawSelectionHandlesRotatedText(ctx, only, camera, theme, dpr);
-
-      // (Optional) keep size label (AABB-based)
-      const wPx = Math.max(0, Math.round((bb.maxx - bb.minx) * camera.scale));
-      const hPx = Math.max(0, Math.round((bb.maxy - bb.miny) * camera.scale));
-      const label = `${wPx} × ${hPx}px`;
-
-      const sp = camera.worldToScreen({ x: bb.maxx, y: bb.maxy });
-      ctx.setTransform(1,0,0,1,0,0);
-      const pad = 6 * dpr;
-      ctx.font = `${12 * dpr}px system-ui,-apple-system,Segoe UI,Roboto,sans-serif`;
-      const metrics = ctx.measureText(label);
-      const lw2 = Math.ceil(metrics.width + pad * 2);
-      const lh = Math.ceil(18 * dpr);
-      const cw = Math.floor(canvasLike.clientWidth * dpr);
-      const ch = Math.floor(canvasLike.clientHeight * dpr);
-      const lx = Math.min(cw - lw2 - 4 * dpr, Math.max(4 * dpr, sp.x * dpr - lw2));
-      const ly = Math.min(ch - lh - 4 * dpr, Math.max(4 * dpr, sp.y * dpr + 8 * dpr));
-      ctx.fillStyle = theme.labelBg;
-      ctx.fillRect(lx, ly, lw2, lh);
-      ctx.strokeStyle = theme.labelStroke;
-      ctx.lineWidth = 1;
-      ctx.strokeRect(lx + 0.5, ly + 0.5, lw2 - 1, lh - 1);
-      ctx.fillStyle = theme.labelText;
-      ctx.fillText(label, lx + pad, ly + lh - 5 * dpr);
-
-      // restore world transform for any later drawing
-      ctx.setTransform(
-        dpr * camera.scale, 0, 0,
-        dpr * camera.scale,
-        dpr * camera.tx, dpr * camera.ty
-      );
+      drawSizeLabel(ctx, camera, bb, canvasLike, theme, dpr);
     } else {
       // Non-rotated or non-text: default axis-aligned selection
       const px = 1 / Math.max(1e-8, dpr * camera.scale);
@@ -1557,34 +1388,7 @@ if (state.selection && state.selection.size) {
   // selection UI matches the shape tools' selection appearance.
   const showMove = !!only && (only.kind === 'shape' || only.kind === 'path');
   drawSelectionHandles(ctx, bb, camera, theme, dpr, hover, showMove, !!(only && only.kind === 'path'));
-
-      // Label (same as before)
-      const wPx = Math.max(0, Math.round(w * camera.scale));
-      const hPx = Math.max(0, Math.round(h * camera.scale));
-      const label = `${wPx} × ${hPx}px`;
-      const sp = camera.worldToScreen({ x: bb.maxx, y: bb.maxy });
-      ctx.setTransform(1,0,0,1,0,0);
-      const pad = 6 * dpr;
-      ctx.font = `${12 * dpr}px system-ui,-apple-system,Segoe UI,Roboto,sans-serif`;
-      const metrics = ctx.measureText(label);
-      const lw2 = Math.ceil(metrics.width + pad * 2);
-      const lh = Math.ceil(18 * dpr);
-      const cw = Math.floor(canvasLike.clientWidth * dpr);
-      const ch = Math.floor(canvasLike.clientHeight * dpr);
-      const lx = Math.min(cw - lw2 - 4 * dpr, Math.max(4 * dpr, sp.x * dpr - lw2));
-      const ly = Math.min(ch - lh - 4 * dpr, Math.max(4 * dpr, sp.y * dpr + 8 * dpr));
-      ctx.fillStyle = theme.labelBg;
-      ctx.fillRect(lx, ly, lw2, lh);
-      ctx.strokeStyle = theme.labelStroke;
-      ctx.lineWidth = 1;
-      ctx.strokeRect(lx + 0.5, ly + 0.5, lw2 - 1, lh - 1);
-      ctx.fillStyle = theme.labelText;
-      ctx.fillText(label, lx + pad, ly + lh - 5 * dpr);
-      ctx.setTransform(
-        dpr * camera.scale, 0, 0,
-        dpr * camera.scale,
-        dpr * camera.tx, dpr * camera.ty
-      );
+  drawSizeLabel(ctx, camera, bb, canvasLike, theme, dpr);
     }
   } else {
     // --- Multi selection path: accumulate AABB correctly ---
@@ -1626,34 +1430,7 @@ if (state.selection && state.selection.size) {
       // Always show move handle for multi-selection.
       const showMoveMulti = true;
       drawSelectionHandles(ctx, bb, camera, theme, dpr, state._hoverHandle || null, showMoveMulti, false);
-      // label
-      const wPx = Math.max(0, Math.round(w * camera.scale));
-      const hPx = Math.max(0, Math.round(h * camera.scale));
-      const label = `${wPx} × ${hPx}px`;
-      const sp = camera.worldToScreen({ x: bb.maxx, y: bb.maxy });
-      ctx.setTransform(1,0,0,1,0,0);
-      const pad = 6 * dpr;
-      ctx.font = `${12 * dpr}px system-ui,-apple-system,Segoe UI,Roboto,sans-serif`;
-      const metrics = ctx.measureText(label);
-      const lw2 = Math.ceil(metrics.width + pad * 2);
-      const lh = Math.ceil(18 * dpr);
-      const cw = Math.floor(canvasLike.clientWidth * dpr);
-      const ch = Math.floor(canvasLike.clientHeight * dpr);
-      const lx = Math.min(cw - lw2 - 4 * dpr, Math.max(4 * dpr, sp.x * dpr - lw2));
-      const ly = Math.min(ch - lh - 4 * dpr, Math.max(4 * dpr, sp.y * dpr + 8 * dpr));
-      ctx.fillStyle = theme.labelBg;
-      ctx.fillRect(lx, ly, lw2, lh);
-      ctx.strokeStyle = theme.labelStroke;
-      ctx.lineWidth = 1;
-      ctx.strokeRect(lx + 0.5, ly + 0.5, lw2 - 1, lh - 1);
-      ctx.fillStyle = theme.labelText;
-      ctx.fillText(label, lx + pad, ly + lh - 5 * dpr);
-
-      ctx.setTransform(
-        dpr * camera.scale, 0, 0,
-        dpr * camera.scale,
-        dpr * camera.tx, dpr * camera.ty
-      );
+      drawSizeLabel(ctx, camera, bb, canvasLike, theme, dpr);
     }
   }
   }
@@ -1680,8 +1457,7 @@ if (state.selection && state.selection.size) {
           if (!pts || n < STRIDE * 2) continue;
           ctx.beginPath();
           ctx.moveTo(pts[0], pts[1]);
-          const tolCap = Math.max(0.5, ctx.lineWidth) * 0.6;
-          const tol = Math.min(tolWorld(camera, /*fast*/true), tolCap);
+          const tol = simplifyTol(camera, state, ctx, /*fast*/true);
           drawPolylineFastWorldTA(ctx, pts, n, camera, 0, (n / STRIDE) - 1, /*fast*/true, tol);
           ctx.stroke();
         } else if (Array.isArray(s.pts)) {
@@ -1689,7 +1465,7 @@ if (state.selection && state.selection.size) {
           if (pts.length < 2) continue;
           ctx.beginPath();
           ctx.moveTo(pts[0].x, pts[0].y);
-          const tw = Math.min(tolWorld(camera, /*fast*/true), Math.max(0.5, ctx.lineWidth) * 0.6);
+          const tw = simplifyTol(camera, state, ctx, /*fast*/true);
           let lx = pts[0].x, ly = pts[0].y;
           for (let k = 1; k < pts.length; k++) {
             const p = pts[k], dx = p.x - lx, dy = p.y - ly;
@@ -1703,14 +1479,10 @@ if (state.selection && state.selection.size) {
     }
   }
 
-  // Only draw the marquee when the Select tool is active. Other tools shouldn't
-  // render the selection marquee. Use the same solid selection styling used
-  // for shape selection boxes so the marquee matches the shape tools' look.
   if (state._marquee && state.tool === 'select') {
     ctx.save();
     const px = 1 / Math.max(1e-8, dpr * camera.scale);
     ctx.lineWidth = Math.max(px, 0.75 * px);
-    // Use solid stroke (no dashes) and the same theme colors as selection
     ctx.setLineDash([]);
     ctx.strokeStyle = theme.selStroke;
     ctx.fillStyle = theme.selFill;
