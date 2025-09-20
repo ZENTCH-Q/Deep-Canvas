@@ -55,6 +55,30 @@ let _pendingSave   = null;
 
 let galleryCtl = null;
 
+// --- tiny shared helpers (no behavior change) -------------------------------
+const clamp01 = (x) => Math.max(0, Math.min(1, x));
+const smooth01 = (t) => (t*t*(3 - 2*t)); // smoothstep
+function clampToViewport(left, top, w, h, pad = 6){
+  const vw = document.documentElement.clientWidth;
+  const vh = document.documentElement.clientHeight;
+  return {
+    left: Math.max(pad, Math.min(left, vw - w - pad)),
+    top:  Math.max(pad, Math.min(top,  vh - h - pad))
+  };
+}
+function clearSelectionUI(st){
+  try { st.selection?.clear?.(); } catch {}
+  st._marquee = null; st._transformActive = false; st._hoverHandle = null; st._activeHandle = null;
+  scheduleRender();
+}
+async function savePNGDownload(scale = 1){
+  const blob = await saveViewportPNG(canvas, ctx, camera, state, scale, dpr);
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url; a.download = 'endless.png'; a.click();
+  URL.revokeObjectURL(url);
+}
+
+
 function docToItem(d) {
   // Use document size for consistent card sizes; thumbnail stays centered visually
   const w = (d.data?.size?.w) || d.data?.width  || 1600;
@@ -392,14 +416,7 @@ canvas.addEventListener('pointerdown',  e => {
         if (!ui) {
           const rWorld = pickRadius(camera, state, 12);
           const hit = pickTopAt(world, rWorld, { camera, state });
-          if (!hit) {
-            try { state.selection.clear(); } catch {}
-            state._marquee = null;
-            state._transformActive = false;
-            state._hoverHandle = null;
-            state._activeHandle = null;
-            scheduleRender();
-          }
+          if (!hit) clearSelectionUI(state);
         }
       }
     }
@@ -568,15 +585,13 @@ function applyWheelZoom(){
 
   // Friction: reduce zoom step as we approach caps (within 10%)
   const scale = camera.scale;
-  const clamp01 = (x) => Math.max(0, Math.min(1, x));
-  const smooth = (t) => (t*t*(3 - 2*t));
   const upProx  = clamp01((scale - maxScale * 0.9) / (maxScale * 0.1));   // 0..1 as we near max
   const dnProx  = clamp01((minScale * 1.1 - scale) / (minScale * 0.1));  // 0..1 as we near min
   if (zoomFactor > 1) {
-    const k = 1 - smooth(upProx);
+    const k = 1 - smooth01(upProx);
     zoomFactor = 1 + (zoomFactor - 1) * k;
   } else if (zoomFactor < 1) {
-    const k = 1 - smooth(dnProx);
+    const k = 1 - smooth01(dnProx);
     zoomFactor = 1 + (zoomFactor - 1) * k;
   }
 
@@ -634,12 +649,7 @@ window.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' || ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'a')) {
     if (state.selection?.size) {
       e.preventDefault();
-      try { state.selection.clear(); } catch {}
-      state._marquee = null;
-      state._transformActive = false;
-      state._hoverHandle = null;
-      state._activeHandle = null;
-      scheduleRender();
+      clearSelectionUI(state);
       return;
     }
   }
@@ -934,10 +944,7 @@ const uiAPI = initUI({
   state, canvas, camera,
   setTool,
   onSave: async (scale=1) => {
-    const blob = await saveViewportPNG(canvas, ctx, camera, state, scale, dpr);
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a'); a.href = url; a.download = 'endless.png'; a.click();
-    URL.revokeObjectURL(url);
+    await savePNGDownload(scale);
   }
 });
 
@@ -996,16 +1003,10 @@ function showCtxMenu(x, y){
   _lastCtxClient = { x, y };
   ctxMenu.style.display = 'block';
   ctxMenu.setAttribute('aria-hidden', 'false');
-  const pad = 6;
-  const vw = document.documentElement.clientWidth;
-  const vh = document.documentElement.clientHeight;
   const rect = { w: ctxMenu.offsetWidth || 200, h: ctxMenu.offsetHeight || 60 };
-  let left = Math.min(x, vw - rect.w - pad);
-  let top  = Math.min(y, vh - rect.h - pad);
-  if (left < pad) left = pad;
-  if (top < pad) top = pad;
-  ctxMenu.style.left = left + 'px';
-  ctxMenu.style.top  = top  + 'px';
+  const pos = clampToViewport(x, y, rect.w, rect.h);
+  ctxMenu.style.left = pos.left + 'px';
+  ctxMenu.style.top  = pos.top  + 'px';
   try {
     const selSize = window._endless?.state?.selection?.size || 0;
     if (ctxDeleteSel) ctxDeleteSel.style.display = selSize > 0 ? 'block' : 'none';
@@ -1071,27 +1072,19 @@ ctxDeleteSel?.addEventListener('click', () => {
       indices.push(i);
     }
   }
-  try { st.selection.clear(); } catch {}
+  clearSelectionUI(st);
   if (removed.length) st.history?.pushDeleteGroup?.(removed, indices);
   hideCtxMenu();
 });
 
 ctxSavePNG?.addEventListener('click', async () => {
-  const blob = await saveViewportPNG(canvas, ctx, camera, state, 1, dpr);
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url; a.download = 'endless.png'; a.click();
-  URL.revokeObjectURL(url);
+  await savePNGDownload(1);
   hideCtxMenu();
 });
 
 // --- Create submenu ------------------------------------------------------------
 function showCreateSubmenu(){
   if (!ctxCreate || !ctxCreateMenu) return;
-  // Position to the right of the Create item
-  const vw = document.documentElement.clientWidth;
-  const vh = document.documentElement.clientHeight;
-  const pad = 6;
   const itemRect = ctxCreate.getBoundingClientRect();
   // Ensure submenu is rendered to measure
   ctxCreateMenu.style.display = 'block';
@@ -1099,12 +1092,9 @@ function showCreateSubmenu(){
   ctxCreate?.setAttribute('aria-expanded','true');
   const w = ctxCreateMenu.offsetWidth || 200;
   const h = ctxCreateMenu.offsetHeight || 40;
-  let left = Math.min(itemRect.right + pad, vw - w - pad);
-  let top  = Math.min(itemRect.top, vh - h - pad);
-  if (left < pad) left = pad;
-  if (top < pad) top = pad;
-  ctxCreateMenu.style.left = left + 'px';
-  ctxCreateMenu.style.top  = top  + 'px';
+  const pos = clampToViewport(itemRect.right + 6, itemRect.top, w, h);
+  ctxCreateMenu.style.left = pos.left + 'px';
+  ctxCreateMenu.style.top  = pos.top  + 'px';
 }
 function hideCreateSubmenu(){
   if (!ctxCreateMenu) return;
